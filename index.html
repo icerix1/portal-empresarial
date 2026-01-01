@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Portal empresarial para gestión de archivos y publicación de contenido">
+    <title>Portal Empresarial</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <header class="header">
+        <div class="header-container">
+            <div class="logo">
+                <div class="logo-icon">P</div>
+                <span class="logo-text">Portal Empresarial</span>
+            </div>
+            <nav class="nav">
+                <a href="#" class="nav-link active" data-tab="archivos">Documentos</a>
+                <a href="#" class="nav-link" data-tab="blogs">Publicaciones</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="container">
+            <!-- Sección de Documentos -->
+            <section id="archivos" class="tab-content active">
+                <div class="page-header">
+                    <h1>Gestión de Documentos</h1>
+                    <p>Suba y administre sus archivos de forma segura</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Subir Archivo</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="upload-area" id="dropZone">
+                            <div class="upload-content">
+                                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="17 8 12 3 7 8" />
+                                    <line x1="12" y1="3" x2="12" y2="15" />
+                                </svg>
+                                <h3>Arrastre sus archivos aquí</h3>
+                                <p>o haga clic para seleccionar</p>
+                                <input type="file" id="fileInput" hidden>
+                                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                                    Seleccionar Archivo
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Archivos Recientes</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="table" id="filesTable">
+                                <thead>
+                                    <tr>
+                                        <th>Nombre</th>
+                                        <th>Tamaño</th>
+                                        <th>Fecha</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="filesContainer">
+                                    <tr class="empty-row">
+                                        <td colspan="4">No hay archivos disponibles</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sección de Publicaciones -->
+            <section id="blogs" class="tab-content">
+                <div class="page-header">
+                    <h1>Publicaciones</h1>
+                    <p>Cree y gestione contenido institucional</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Nueva Publicación</h2>
+                    </div>
+                    <div class="card-body">
+                        <form class="form" id="blogForm">
+                            <div class="form-group">
+                                <label for="blogTitle">Título</label>
+                                <input type="text" id="blogTitle" class="form-control"
+                                    placeholder="Ingrese el título de la publicación">
+                            </div>
+                            <div class="form-group">
+                                <label for="blogContent">Contenido</label>
+                                <textarea id="blogContent" class="form-control" rows="6"
+                                    placeholder="Escriba el contenido de su publicación..."></textarea>
+                            </div>
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-primary" onclick="publishBlog()">
+                                    Publicar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Publicaciones Recientes</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="posts-list" id="blogsContainer">
+                            <p class="empty-message">No hay publicaciones disponibles</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2026 Portal Empresarial. Todos los derechos reservados.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
