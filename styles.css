@@ -84,6 +84,7 @@ body {
 .nav {
     display: flex;
     gap: 0.5rem;
+    align-items: center;
 }
 
 .nav-link {
@@ -104,6 +105,108 @@ body {
 .nav-link.active {
     color: var(--primary);
     background: rgba(26, 86, 219, 0.1);
+}
+
+.admin-link {
+    margin-left: 1rem;
+    padding: 0.5rem;
+    font-size: 1.1rem;
+}
+
+/* ========================================
+   Modal
+   ======================================== */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal {
+    background: var(--white);
+    padding: 2rem;
+    border-radius: var(--radius);
+    width: 90%;
+    max-width: 400px;
+    box-shadow: var(--shadow-md);
+}
+
+.modal h2 {
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.modal p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+.modal .form-control {
+    margin-bottom: 1rem;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+/* ========================================
+   Admin Banner
+   ======================================== */
+.admin-banner {
+    background: #059669;
+    color: white;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 1.5rem;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.btn-logout {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: none;
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-logout:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* ========================================
+   Admin Only Elements
+   ======================================== */
+.admin-only {
+    display: none;
+}
+
+.admin-only-header {
+    display: none;
+}
+
+.hidden {
+    display: none !important;
 }
 
 /* ========================================
@@ -249,6 +352,16 @@ body {
 
 .btn-primary:hover {
     background: var(--primary-hover);
+}
+
+.btn-secondary {
+    background: var(--background);
+    color: var(--text-dark);
+    border: 1px solid var(--border-dark);
+}
+
+.btn-secondary:hover {
+    background: var(--border);
 }
 
 .btn-danger {
@@ -462,5 +575,11 @@ textarea.form-control {
     .table td {
         padding: 0.75rem 0.5rem;
         font-size: 0.85rem;
+    }
+
+    .admin-banner {
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
     }
 }

@@ -1,11 +1,95 @@
 // ========================================
+// CONFIGURACIÓN - CAMBIA TU CONTRASEÑA AQUÍ
+// ========================================
+const ADMIN_PASSWORD = 'admin123'; // ⚠️ Cambia esto por tu contraseña secreta
+
+// ========================================
+// Sistema de Autenticación Admin
+// ========================================
+let isAdmin = localStorage.getItem('isAdmin') === 'true';
+
+function checkAdminStatus() {
+    const adminElements = document.querySelectorAll('.admin-only');
+    const adminHeaders = document.querySelectorAll('.admin-only-header');
+    const adminBanner = document.getElementById('adminBanner');
+    const adminToggle = document.getElementById('adminToggle');
+
+    if (isAdmin) {
+        adminElements.forEach(el => el.style.display = 'block');
+        adminHeaders.forEach(el => el.style.display = 'table-cell');
+        adminBanner.style.display = 'flex';
+        adminToggle.textContent = '🔓';
+        adminToggle.title = 'Cerrar sesión admin';
+    } else {
+        adminElements.forEach(el => el.style.display = 'none');
+        adminHeaders.forEach(el => el.style.display = 'none');
+        adminBanner.style.display = 'none';
+        adminToggle.textContent = '⚙️';
+        adminToggle.title = 'Modo Admin';
+    }
+
+    renderFiles();
+    renderBlogs();
+}
+
+function openLoginModal() {
+    if (isAdmin) {
+        logout();
+    } else {
+        document.getElementById('loginModal').classList.add('active');
+        document.getElementById('adminPassword').focus();
+    }
+}
+
+function closeLoginModal() {
+    document.getElementById('loginModal').classList.remove('active');
+    document.getElementById('adminPassword').value = '';
+}
+
+function attemptLogin() {
+    const password = document.getElementById('adminPassword').value;
+
+    if (password === ADMIN_PASSWORD) {
+        isAdmin = true;
+        localStorage.setItem('isAdmin', 'true');
+        closeLoginModal();
+        checkAdminStatus();
+    } else {
+        alert('Contraseña incorrecta');
+        document.getElementById('adminPassword').value = '';
+    }
+}
+
+function logout() {
+    isAdmin = false;
+    localStorage.removeItem('isAdmin');
+    checkAdminStatus();
+}
+
+// Enter key para login
+document.getElementById('adminPassword').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') attemptLogin();
+});
+
+// Click en botón admin
+document.getElementById('adminToggle').addEventListener('click', (e) => {
+    e.preventDefault();
+    openLoginModal();
+});
+
+// Cerrar modal al hacer clic fuera
+document.getElementById('loginModal').addEventListener('click', (e) => {
+    if (e.target.id === 'loginModal') closeLoginModal();
+});
+
+// ========================================
 // Navegación por Pestañas
 // ========================================
-document.querySelectorAll('.nav-link').forEach(link => {
+document.querySelectorAll('.nav-link:not(.admin-link)').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
 
-        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        document.querySelectorAll('.nav-link:not(.admin-link)').forEach(l => l.classList.remove('active'));
         link.classList.add('active');
 
         const tabName = link.dataset.tab;
@@ -25,8 +109,6 @@ const filesContainer = document.getElementById('filesContainer');
 
 let uploadedFiles = JSON.parse(localStorage.getItem('uploadedFiles')) || [];
 
-renderFiles();
-
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropZone.classList.add('dragover');
@@ -39,15 +121,15 @@ dropZone.addEventListener('dragleave', () => {
 dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
-    handleFiles(e.dataTransfer.files);
+    if (isAdmin) handleFiles(e.dataTransfer.files);
 });
 
 dropZone.addEventListener('click', () => {
-    fileInput.click();
+    if (isAdmin) fileInput.click();
 });
 
 fileInput.addEventListener('change', (e) => {
-    handleFiles(e.target.files);
+    if (isAdmin) handleFiles(e.target.files);
 });
 
 function handleFiles(files) {
@@ -93,7 +175,7 @@ function renderFiles() {
             <td class="file-name">${escapeHtml(file.name)}</td>
             <td>${file.size}</td>
             <td>${file.date}</td>
-            <td>
+            <td class="${isAdmin ? '' : 'hidden'}">
                 <button class="btn btn-danger" onclick="deleteFile(${file.id})">Eliminar</button>
             </td>
         </tr>
@@ -101,6 +183,7 @@ function renderFiles() {
 }
 
 function deleteFile(id) {
+    if (!isAdmin) return;
     uploadedFiles = uploadedFiles.filter(file => file.id !== id);
     saveFiles();
     renderFiles();
@@ -115,9 +198,9 @@ function saveFiles() {
 // ========================================
 let blogPosts = JSON.parse(localStorage.getItem('blogPosts')) || [];
 
-renderBlogs();
-
 function publishBlog() {
+    if (!isAdmin) return;
+
     const title = document.getElementById('blogTitle').value.trim();
     const content = document.getElementById('blogContent').value.trim();
 
@@ -160,14 +243,17 @@ function renderBlogs() {
                 <span class="post-date">${post.date}</span>
             </div>
             <p class="post-content">${escapeHtml(post.content)}</p>
+            ${isAdmin ? `
             <div class="post-actions">
                 <button class="btn btn-danger" onclick="deleteBlog(${post.id})">Eliminar</button>
             </div>
+            ` : ''}
         </div>
     `).join('');
 }
 
 function deleteBlog(id) {
+    if (!isAdmin) return;
     blogPosts = blogPosts.filter(post => post.id !== id);
     saveBlogs();
     renderBlogs();
@@ -182,3 +268,8 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// ========================================
+// Inicialización
+// ========================================
+checkAdminStatus();

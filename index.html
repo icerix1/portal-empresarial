@@ -20,20 +20,41 @@
             <nav class="nav">
                 <a href="#" class="nav-link active" data-tab="archivos">Documentos</a>
                 <a href="#" class="nav-link" data-tab="blogs">Publicaciones</a>
+                <a href="#" class="nav-link admin-link" id="adminToggle" title="Modo Admin">⚙️</a>
             </nav>
         </div>
     </header>
 
+    <!-- Modal de Login Admin -->
+    <div class="modal-overlay" id="loginModal">
+        <div class="modal">
+            <h2>Acceso Administrador</h2>
+            <p>Ingrese la contraseña de administrador</p>
+            <input type="password" id="adminPassword" class="form-control" placeholder="Contraseña">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeLoginModal()">Cancelar</button>
+                <button class="btn btn-primary" onclick="attemptLogin()">Ingresar</button>
+            </div>
+        </div>
+    </div>
+
     <main class="main">
         <div class="container">
+            <!-- Indicador de modo admin -->
+            <div class="admin-banner" id="adminBanner">
+                🔐 Modo Administrador activo
+                <button class="btn-logout" onclick="logout()">Salir</button>
+            </div>
+
             <!-- Sección de Documentos -->
             <section id="archivos" class="tab-content active">
                 <div class="page-header">
                     <h1>Gestión de Documentos</h1>
-                    <p>Suba y administre sus archivos de forma segura</p>
+                    <p>Archivos disponibles para descarga</p>
                 </div>
 
-                <div class="card">
+                <!-- Solo visible para admin -->
+                <div class="card admin-only" id="uploadCard">
                     <div class="card-header">
                         <h2>Subir Archivo</h2>
                     </div>
@@ -59,7 +80,7 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <h2>Archivos Recientes</h2>
+                        <h2>Archivos Disponibles</h2>
                     </div>
                     <div class="card-body">
                         <div class="table-container">
@@ -69,7 +90,7 @@
                                         <th>Nombre</th>
                                         <th>Tamaño</th>
                                         <th>Fecha</th>
-                                        <th>Acciones</th>
+                                        <th class="admin-only-header">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="filesContainer">
@@ -87,10 +108,11 @@
             <section id="blogs" class="tab-content">
                 <div class="page-header">
                     <h1>Publicaciones</h1>
-                    <p>Cree y gestione contenido institucional</p>
+                    <p>Contenido institucional</p>
                 </div>
 
-                <div class="card">
+                <!-- Solo visible para admin -->
+                <div class="card admin-only" id="blogFormCard">
                     <div class="card-header">
                         <h2>Nueva Publicación</h2>
                     </div>
