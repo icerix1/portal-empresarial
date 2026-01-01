@@ -20,38 +20,15 @@
             <nav class="nav">
                 <a href="#" class="nav-link active" data-tab="archivos">Documentos</a>
                 <a href="#" class="nav-link" data-tab="blogs">Publicaciones</a>
-                <a href="#" class="nav-link admin-link" id="adminToggle" title="Configurar ubicación admin">⚙️</a>
             </nav>
         </div>
     </header>
 
-    <!-- Modal de Configuración de Ubicación -->
-    <div class="modal-overlay" id="locationModal">
-        <div class="modal">
-            <h2>📍 Configuración Admin</h2>
-            <p id="locationStatus">No hay ubicación configurada</p>
-            <p class="modal-help">Guarda tu ubicación actual para que el modo admin se active automáticamente cuando
-                estés aquí.</p>
-            <div class="modal-actions-vertical">
-                <button class="btn btn-primary btn-full" id="saveLocationBtn" onclick="saveAdminLocation()">
-                    📍 Guardar mi ubicación actual
-                </button>
-                <button class="btn btn-danger btn-full" id="clearLocationBtn" onclick="clearAdminLocation()"
-                    style="display: none;">
-                    🗑️ Eliminar ubicación guardada
-                </button>
-                <button class="btn btn-secondary btn-full" onclick="closeLocationModal()">
-                    Cerrar
-                </button>
-            </div>
-        </div>
-    </div>
-
     <main class="main">
         <div class="container">
-            <!-- Indicador de modo admin -->
+            <!-- Indicador de modo admin (solo visible para admin) -->
             <div class="admin-banner" id="adminBanner">
-                🔐 Modo Administrador activo (ubicación verificada)
+                🔐 Modo Administrador activo
             </div>
 
             <!-- Sección de Documentos -->
@@ -116,7 +93,7 @@
             <section id="blogs" class="tab-content">
                 <div class="page-header">
                     <h1>Publicaciones</h1>
-                    <p>Contenido institucional</p>
+                    <p>Contenido y novedades</p>
                 </div>
 
                 <!-- Solo visible para admin -->
@@ -128,18 +105,15 @@
                         <form class="form" id="blogForm">
                             <div class="form-group">
                                 <label for="blogTitle">Título</label>
-                                <input type="text" id="blogTitle" class="form-control"
-                                    placeholder="Ingrese el título de la publicación">
+                                <input type="text" id="blogTitle" class="form-control" placeholder="Ingrese el título">
                             </div>
                             <div class="form-group">
                                 <label for="blogContent">Contenido</label>
-                                <textarea id="blogContent" class="form-control" rows="6"
-                                    placeholder="Escriba el contenido de su publicación..."></textarea>
+                                <textarea id="blogContent" class="form-control" rows="5"
+                                    placeholder="Escriba el contenido..."></textarea>
                             </div>
                             <div class="form-actions">
-                                <button type="button" class="btn btn-primary" onclick="publishBlog()">
-                                    Publicar
-                                </button>
+                                <button type="button" class="btn btn-primary" onclick="publishBlog()">Publicar</button>
                             </div>
                         </form>
                     </div>

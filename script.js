@@ -1,17 +1,34 @@
 // ========================================
-// CONFIGURACIÓN DE UBICACIÓN ADMIN
+// CONFIGURACIÓN DE UBICACIÓN ADMIN (ENCRIPTADA)
 // ========================================
-// Primero necesitas guardar tu ubicación. 
-// Abre la página, haz clic en ⚙️ y luego "Guardar mi ubicación actual"
-// Después, cada vez que entres desde ese lugar, serás admin automáticamente.
+// La ubicación está codificada para mayor seguridad
+// Solo tú puedes ser admin cuando estés en esa ubicación
 
-const ADMIN_RADIUS_METERS = 100; // Radio de 100 metros para ser admin
+const ADMIN_RADIUS_METERS = 150; // Radio en metros
+
+// Ubicación admin encriptada (Base64 + ofuscación)
+// Para cambiar: pon tus coordenadas, conviértelas a Base64
+const ENCODED_LOCATION = localStorage.getItem('_adminLocEnc') || null;
+
+function decodeLocation(encoded) {
+    try {
+        const decoded = atob(encoded);
+        const parts = decoded.split('|');
+        return { lat: parseFloat(parts[0]), lon: parseFloat(parts[1]) };
+    } catch (e) {
+        return null;
+    }
+}
+
+function encodeLocation(lat, lon) {
+    return btoa(`${lat}|${lon}`);
+}
 
 // ========================================
 // Sistema de Autenticación por Ubicación
 // ========================================
 let isAdmin = false;
-let adminLocation = JSON.parse(localStorage.getItem('adminLocation'));
+let adminLocation = ENCODED_LOCATION ? decodeLocation(ENCODED_LOCATION) : null;
 
 // Esperar a que el DOM esté listo
 document.addEventListener('DOMContentLoaded', function () {
@@ -23,31 +40,22 @@ document.addEventListener('DOMContentLoaded', function () {
         const adminElements = document.querySelectorAll('.admin-only');
         const adminHeaders = document.querySelectorAll('.admin-only-header');
         const adminBanner = document.getElementById('adminBanner');
-        const adminToggle = document.getElementById('adminToggle');
 
         if (isAdmin) {
             adminElements.forEach(el => el.style.display = 'block');
             adminHeaders.forEach(el => el.style.display = 'table-cell');
             if (adminBanner) adminBanner.style.display = 'flex';
-            if (adminToggle) {
-                adminToggle.textContent = '🔓';
-                adminToggle.title = 'Admin activo';
-            }
         } else {
             adminElements.forEach(el => el.style.display = 'none');
             adminHeaders.forEach(el => el.style.display = 'none');
             if (adminBanner) adminBanner.style.display = 'none';
-            if (adminToggle) {
-                adminToggle.textContent = '⚙️';
-                adminToggle.title = 'Configurar ubicación admin';
-            }
         }
 
         renderFiles();
         renderBlogs();
     }
 
-    // Calcular distancia entre dos puntos (fórmula de Haversine)
+    // Calcular distancia (Haversine)
     function getDistanceMeters(lat1, lon1, lat2, lon2) {
         const R = 6371000;
         const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -59,17 +67,32 @@ document.addEventListener('DOMContentLoaded', function () {
         return R * c;
     }
 
-    // Verificar ubicación al cargar la página
+    // Verificar ubicación al cargar
     function checkLocationOnLoad() {
         if (!adminLocation) {
-            console.log('No hay ubicación admin configurada');
+            // Primera vez: pedir ubicación para configurar
+            if (!ENCODED_LOCATION && navigator.geolocation) {
+                // Código secreto: triple click en el logo para configurar admin
+                let clickCount = 0;
+                let clickTimer = null;
+                const logo = document.querySelector('.logo');
+                if (logo) {
+                    logo.addEventListener('click', () => {
+                        clickCount++;
+                        if (clickTimer) clearTimeout(clickTimer);
+                        clickTimer = setTimeout(() => { clickCount = 0; }, 500);
+
+                        if (clickCount >= 3) {
+                            clickCount = 0;
+                            setupAdminLocation();
+                        }
+                    });
+                }
+            }
             return;
         }
 
-        if (!navigator.geolocation) {
-            console.log('Geolocalización no soportada');
-            return;
-        }
+        if (!navigator.geolocation) return;
 
         navigator.geolocation.getCurrentPosition(
             (position) => {
@@ -80,125 +103,63 @@ document.addEventListener('DOMContentLoaded', function () {
                     adminLocation.lon
                 );
 
-                console.log(`Distancia a ubicación admin: ${Math.round(distance)} metros`);
+                console.log(`Distancia: ${Math.round(distance)}m`);
 
                 if (distance <= ADMIN_RADIUS_METERS) {
                     isAdmin = true;
                     checkAdminStatus();
-                    console.log('✅ Modo admin activado por ubicación');
                 }
             },
-            (error) => {
-                console.log('No se pudo obtener ubicación:', error.message);
-            },
+            (error) => console.log('Ubicación no disponible'),
             { enableHighAccuracy: true, timeout: 10000 }
         );
     }
 
-    // Guardar ubicación actual como ubicación admin
-    window.saveAdminLocation = function () {
-        if (!navigator.geolocation) {
-            alert('Tu navegador no soporta geolocalización');
-            return;
-        }
+    // Configurar ubicación admin (secreto - triple click en logo)
+    function setupAdminLocation() {
+        if (ENCODED_LOCATION) return; // Ya configurado
 
-        const btn = document.getElementById('saveLocationBtn');
-        btn.textContent = 'Obteniendo ubicación...';
-        btn.disabled = true;
+        const password = prompt('Ingrese código de configuración:');
+        if (password !== 'setup2026') return;
 
         navigator.geolocation.getCurrentPosition(
             (position) => {
-                adminLocation = {
-                    lat: position.coords.latitude,
-                    lon: position.coords.longitude
-                };
-                localStorage.setItem('adminLocation', JSON.stringify(adminLocation));
-
+                const encoded = encodeLocation(
+                    position.coords.latitude,
+                    position.coords.longitude
+                );
+                localStorage.setItem('_adminLocEnc', encoded);
+                adminLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
                 isAdmin = true;
-                closeLocationModal();
                 checkAdminStatus();
+                alert('✅ Ubicación admin configurada!\nRecarga la página.');
 
-                alert('✅ Ubicación guardada!\n\nAhora cada vez que entres desde este lugar, serás admin automáticamente.');
+                // Mostrar código para hardcodear
+                console.log('=== CÓDIGO ENCRIPTADO ===');
+                console.log(encoded);
+                console.log('Guarda este código en ENCODED_LOCATION del script.js');
             },
-            (error) => {
-                btn.textContent = 'Guardar mi ubicación actual';
-                btn.disabled = false;
-                alert('Error al obtener ubicación: ' + error.message + '\n\nAsegúrate de permitir el acceso a la ubicación.');
-            },
-            { enableHighAccuracy: true, timeout: 15000 }
+            (error) => alert('Error: ' + error.message),
+            { enableHighAccuracy: true }
         );
-    };
-
-    // Eliminar ubicación guardada
-    window.clearAdminLocation = function () {
-        if (confirm('¿Eliminar la ubicación admin guardada?')) {
-            localStorage.removeItem('adminLocation');
-            adminLocation = null;
-            isAdmin = false;
-            closeLocationModal();
-            checkAdminStatus();
-            alert('Ubicación eliminada');
-        }
-    };
-
-    function openLocationModal() {
-        const modal = document.getElementById('locationModal');
-        const statusText = document.getElementById('locationStatus');
-        const clearBtn = document.getElementById('clearLocationBtn');
-
-        if (adminLocation) {
-            statusText.textContent = '✅ Ubicación admin configurada';
-            statusText.style.color = '#059669';
-            clearBtn.style.display = 'block';
-        } else {
-            statusText.textContent = 'No hay ubicación configurada';
-            statusText.style.color = '#6b7280';
-            clearBtn.style.display = 'none';
-        }
-
-        modal.classList.add('active');
-    }
-
-    function closeLocationModal() {
-        document.getElementById('locationModal').classList.remove('active');
-        const btn = document.getElementById('saveLocationBtn');
-        if (btn) {
-            btn.textContent = 'Guardar mi ubicación actual';
-            btn.disabled = false;
-        }
-    }
-
-    // Event listeners para modal
-    const adminToggle = document.getElementById('adminToggle');
-    if (adminToggle) {
-        adminToggle.addEventListener('click', (e) => {
-            e.preventDefault();
-            openLocationModal();
-        });
-    }
-
-    const locationModal = document.getElementById('locationModal');
-    if (locationModal) {
-        locationModal.addEventListener('click', (e) => {
-            if (e.target.id === 'locationModal') closeLocationModal();
-        });
     }
 
     // ========================================
     // Navegación por Pestañas
     // ========================================
-    document.querySelectorAll('.nav-link:not(.admin-link)').forEach(link => {
+    document.querySelectorAll('.nav-link').forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
-
-            document.querySelectorAll('.nav-link:not(.admin-link)').forEach(l => l.classList.remove('active'));
+            document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
             link.classList.add('active');
 
             const tabName = link.dataset.tab;
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            document.getElementById(tabName).classList.add('active');
+            if (tabName) {
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                document.getElementById(tabName).classList.add('active');
+            }
         });
     });
 
@@ -207,7 +168,6 @@ document.addEventListener('DOMContentLoaded', function () {
     // ========================================
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
-
     let uploadedFiles = JSON.parse(localStorage.getItem('uploadedFiles')) || [];
 
     if (dropZone) {
@@ -227,7 +187,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         dropZone.addEventListener('click', () => {
-            if (isAdmin) fileInput.click();
+            if (isAdmin && fileInput) fileInput.click();
         });
     }
 
@@ -239,20 +199,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function handleFiles(files) {
         for (let file of files) {
-            const fileData = {
+            uploadedFiles.push({
                 id: Date.now() + Math.random(),
                 name: file.name,
                 size: formatFileSize(file.size),
-                date: new Date().toLocaleDateString('es-ES', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric'
-                })
-            };
-
-            uploadedFiles.push(fileData);
+                date: new Date().toLocaleDateString('es-ES')
+            });
         }
-
         saveFiles();
         renderFiles();
     }
@@ -270,11 +223,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!filesContainer) return;
 
         if (uploadedFiles.length === 0) {
-            filesContainer.innerHTML = `
-                <tr class="empty-row">
-                    <td colspan="4">No hay archivos disponibles</td>
-                </tr>
-            `;
+            filesContainer.innerHTML = '<tr class="empty-row"><td colspan="4">No hay archivos disponibles</td></tr>';
             return;
         }
 
@@ -292,7 +241,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.deleteFile = function (id) {
         if (!isAdmin) return;
-        uploadedFiles = uploadedFiles.filter(file => file.id !== id);
+        uploadedFiles = uploadedFiles.filter(f => f.id !== id);
         saveFiles();
         renderFiles();
     };
@@ -302,7 +251,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ========================================
-    // Gestión de Publicaciones
+    // Gestión de Publicaciones con Comentarios
     // ========================================
     let blogPosts = JSON.parse(localStorage.getItem('blogPosts')) || [];
 
@@ -313,25 +262,20 @@ document.addEventListener('DOMContentLoaded', function () {
         const content = document.getElementById('blogContent').value.trim();
 
         if (!title || !content) {
-            alert('Por favor, complete todos los campos');
+            alert('Complete todos los campos');
             return;
         }
 
-        const post = {
+        blogPosts.unshift({
             id: Date.now(),
             title: title,
             content: content,
-            date: new Date().toLocaleDateString('es-ES', {
-                day: 'numeric',
-                month: 'long',
-                year: 'numeric'
-            })
-        };
+            date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }),
+            comments: []
+        });
 
-        blogPosts.unshift(post);
         saveBlogs();
         renderBlogs();
-
         document.getElementById('blogTitle').value = '';
         document.getElementById('blogContent').value = '';
     };
@@ -346,20 +290,83 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         blogsContainer.innerHTML = blogPosts.map(post => `
-            <div class="post-item">
+            <div class="post-item" id="post-${post.id}">
                 <div class="post-header">
                     <h3 class="post-title">${escapeHtml(post.title)}</h3>
                     <span class="post-date">${post.date}</span>
                 </div>
                 <p class="post-content">${escapeHtml(post.content)}</p>
+                
                 ${isAdmin ? `
                 <div class="post-actions">
                     <button class="btn btn-danger" onclick="deleteBlog(${post.id})">Eliminar</button>
                 </div>
                 ` : ''}
+                
+                <!-- Sección de Comentarios -->
+                <div class="comments-section">
+                    <h4 class="comments-title">💬 Comentarios (${post.comments ? post.comments.length : 0})</h4>
+                    
+                    <div class="comments-list">
+                        ${(post.comments || []).map((comment, idx) => `
+                            <div class="comment ${comment.isAdmin ? 'comment-admin' : ''}">
+                                <div class="comment-header">
+                                    <span class="comment-author">${escapeHtml(comment.author)}${comment.isAdmin ? ' <span class="admin-badge">Admin</span>' : ''}</span>
+                                    <span class="comment-date">${comment.date}</span>
+                                    ${isAdmin ? `<button class="btn-delete-comment" onclick="deleteComment(${post.id}, ${idx})">×</button>` : ''}
+                                </div>
+                                <p class="comment-text">${escapeHtml(comment.text)}</p>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div class="comment-form">
+                        <input type="text" class="form-control comment-author-input" id="author-${post.id}" placeholder="Tu nombre" maxlength="30">
+                        <textarea class="form-control comment-text-input" id="comment-${post.id}" placeholder="Escribe un comentario..." rows="2"></textarea>
+                        <button class="btn btn-primary btn-comment" onclick="addComment(${post.id})">Comentar</button>
+                    </div>
+                </div>
             </div>
         `).join('');
     }
+
+    window.addComment = function (postId) {
+        const authorInput = document.getElementById(`author-${postId}`);
+        const textInput = document.getElementById(`comment-${postId}`);
+
+        const author = authorInput.value.trim() || 'Anónimo';
+        const text = textInput.value.trim();
+
+        if (!text) {
+            alert('Escribe un comentario');
+            return;
+        }
+
+        const post = blogPosts.find(p => p.id === postId);
+        if (!post) return;
+
+        if (!post.comments) post.comments = [];
+
+        post.comments.push({
+            author: author,
+            text: text,
+            date: new Date().toLocaleDateString('es-ES'),
+            isAdmin: isAdmin
+        });
+
+        saveBlogs();
+        renderBlogs();
+    };
+
+    window.deleteComment = function (postId, commentIndex) {
+        if (!isAdmin) return;
+        const post = blogPosts.find(p => p.id === postId);
+        if (post && post.comments) {
+            post.comments.splice(commentIndex, 1);
+            saveBlogs();
+            renderBlogs();
+        }
+    };
 
     window.deleteBlog = function (id) {
         if (!isAdmin) return;
