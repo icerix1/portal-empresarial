@@ -20,20 +20,29 @@
             <nav class="nav">
                 <a href="#" class="nav-link active" data-tab="archivos">Documentos</a>
                 <a href="#" class="nav-link" data-tab="blogs">Publicaciones</a>
-                <a href="#" class="nav-link admin-link" id="adminToggle" title="Modo Admin">⚙️</a>
+                <a href="#" class="nav-link admin-link" id="adminToggle" title="Configurar ubicación admin">⚙️</a>
             </nav>
         </div>
     </header>
 
-    <!-- Modal de Login Admin -->
-    <div class="modal-overlay" id="loginModal">
+    <!-- Modal de Configuración de Ubicación -->
+    <div class="modal-overlay" id="locationModal">
         <div class="modal">
-            <h2>Acceso Administrador</h2>
-            <p>Ingrese la contraseña de administrador</p>
-            <input type="password" id="adminPassword" class="form-control" placeholder="Contraseña">
-            <div class="modal-actions">
-                <button class="btn btn-secondary" onclick="closeLoginModal()">Cancelar</button>
-                <button class="btn btn-primary" onclick="attemptLogin()">Ingresar</button>
+            <h2>📍 Configuración Admin</h2>
+            <p id="locationStatus">No hay ubicación configurada</p>
+            <p class="modal-help">Guarda tu ubicación actual para que el modo admin se active automáticamente cuando
+                estés aquí.</p>
+            <div class="modal-actions-vertical">
+                <button class="btn btn-primary btn-full" id="saveLocationBtn" onclick="saveAdminLocation()">
+                    📍 Guardar mi ubicación actual
+                </button>
+                <button class="btn btn-danger btn-full" id="clearLocationBtn" onclick="clearAdminLocation()"
+                    style="display: none;">
+                    🗑️ Eliminar ubicación guardada
+                </button>
+                <button class="btn btn-secondary btn-full" onclick="closeLocationModal()">
+                    Cerrar
+                </button>
             </div>
         </div>
     </div>
@@ -42,8 +51,7 @@
         <div class="container">
             <!-- Indicador de modo admin -->
             <div class="admin-banner" id="adminBanner">
-                🔐 Modo Administrador activo
-                <button class="btn-logout" onclick="logout()">Salir</button>
+                🔐 Modo Administrador activo (ubicación verificada)
             </div>
 
             <!-- Sección de Documentos -->

@@ -163,6 +163,23 @@ body {
     justify-content: flex-end;
 }
 
+.modal-actions-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.btn-full {
+    width: 100%;
+}
+
+.modal-help {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 1.25rem;
+    line-height: 1.5;
+}
+
 /* ========================================
    Admin Banner
    ======================================== */

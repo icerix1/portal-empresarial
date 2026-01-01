@@ -1,12 +1,17 @@
 // ========================================
-// CONFIGURACIÓN - CAMBIA TU CONTRASEÑA AQUÍ
+// CONFIGURACIÓN DE UBICACIÓN ADMIN
 // ========================================
-const ADMIN_PASSWORD = 'admin123'; // ⚠️ Cambia esto por tu contraseña secreta
+// Primero necesitas guardar tu ubicación. 
+// Abre la página, haz clic en ⚙️ y luego "Guardar mi ubicación actual"
+// Después, cada vez que entres desde ese lugar, serás admin automáticamente.
+
+const ADMIN_RADIUS_METERS = 100; // Radio de 100 metros para ser admin
 
 // ========================================
-// Sistema de Autenticación Admin
+// Sistema de Autenticación por Ubicación
 // ========================================
-let isAdmin = localStorage.getItem('isAdmin') === 'true';
+let isAdmin = false;
+let adminLocation = JSON.parse(localStorage.getItem('adminLocation'));
 
 function checkAdminStatus() {
     const adminElements = document.querySelectorAll('.admin-only');
@@ -19,67 +24,147 @@ function checkAdminStatus() {
         adminHeaders.forEach(el => el.style.display = 'table-cell');
         adminBanner.style.display = 'flex';
         adminToggle.textContent = '🔓';
-        adminToggle.title = 'Cerrar sesión admin';
+        adminToggle.title = 'Admin activo';
     } else {
         adminElements.forEach(el => el.style.display = 'none');
         adminHeaders.forEach(el => el.style.display = 'none');
         adminBanner.style.display = 'none';
         adminToggle.textContent = '⚙️';
-        adminToggle.title = 'Modo Admin';
+        adminToggle.title = 'Configurar ubicación admin';
     }
 
     renderFiles();
     renderBlogs();
 }
 
-function openLoginModal() {
-    if (isAdmin) {
-        logout();
-    } else {
-        document.getElementById('loginModal').classList.add('active');
-        document.getElementById('adminPassword').focus();
+// Calcular distancia entre dos puntos (fórmula de Haversine)
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // Radio de la Tierra en metros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+// Verificar ubicación al cargar la página
+function checkLocationOnLoad() {
+    if (!adminLocation) {
+        console.log('No hay ubicación admin configurada');
+        return;
     }
+
+    if (!navigator.geolocation) {
+        console.log('Geolocalización no soportada');
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        (position) => {
+            const distance = getDistanceMeters(
+                position.coords.latitude,
+                position.coords.longitude,
+                adminLocation.lat,
+                adminLocation.lon
+            );
+
+            console.log(`Distancia a ubicación admin: ${Math.round(distance)} metros`);
+
+            if (distance <= ADMIN_RADIUS_METERS) {
+                isAdmin = true;
+                checkAdminStatus();
+                console.log('✅ Modo admin activado por ubicación');
+            }
+        },
+        (error) => {
+            console.log('No se pudo obtener ubicación:', error.message);
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+    );
 }
 
-function closeLoginModal() {
-    document.getElementById('loginModal').classList.remove('active');
-    document.getElementById('adminPassword').value = '';
+// Guardar ubicación actual como ubicación admin
+function saveAdminLocation() {
+    if (!navigator.geolocation) {
+        alert('Tu navegador no soporta geolocalización');
+        return;
+    }
+
+    const btn = document.getElementById('saveLocationBtn');
+    btn.textContent = 'Obteniendo ubicación...';
+    btn.disabled = true;
+
+    navigator.geolocation.getCurrentPosition(
+        (position) => {
+            adminLocation = {
+                lat: position.coords.latitude,
+                lon: position.coords.longitude
+            };
+            localStorage.setItem('adminLocation', JSON.stringify(adminLocation));
+
+            isAdmin = true;
+            closeLocationModal();
+            checkAdminStatus();
+
+            alert('✅ Ubicación guardada!\n\nAhora cada vez que entres desde este lugar, serás admin automáticamente.');
+        },
+        (error) => {
+            btn.textContent = 'Guardar mi ubicación actual';
+            btn.disabled = false;
+            alert('Error al obtener ubicación: ' + error.message + '\n\nAsegúrate de permitir el acceso a la ubicación.');
+        },
+        { enableHighAccuracy: true, timeout: 15000 }
+    );
 }
 
-function attemptLogin() {
-    const password = document.getElementById('adminPassword').value;
-
-    if (password === ADMIN_PASSWORD) {
-        isAdmin = true;
-        localStorage.setItem('isAdmin', 'true');
-        closeLoginModal();
+// Eliminar ubicación guardada
+function clearAdminLocation() {
+    if (confirm('¿Eliminar la ubicación admin guardada?')) {
+        localStorage.removeItem('adminLocation');
+        adminLocation = null;
+        isAdmin = false;
+        closeLocationModal();
         checkAdminStatus();
-    } else {
-        alert('Contraseña incorrecta');
-        document.getElementById('adminPassword').value = '';
+        alert('Ubicación eliminada');
     }
 }
 
-function logout() {
-    isAdmin = false;
-    localStorage.removeItem('isAdmin');
-    checkAdminStatus();
+function openLocationModal() {
+    const modal = document.getElementById('locationModal');
+    const statusText = document.getElementById('locationStatus');
+    const clearBtn = document.getElementById('clearLocationBtn');
+
+    if (adminLocation) {
+        statusText.textContent = '✅ Ubicación admin configurada';
+        statusText.style.color = '#059669';
+        clearBtn.style.display = 'block';
+    } else {
+        statusText.textContent = 'No hay ubicación configurada';
+        statusText.style.color = '#6b7280';
+        clearBtn.style.display = 'none';
+    }
+
+    modal.classList.add('active');
 }
 
-// Enter key para login
-document.getElementById('adminPassword').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') attemptLogin();
-});
+function closeLocationModal() {
+    document.getElementById('locationModal').classList.remove('active');
+    const btn = document.getElementById('saveLocationBtn');
+    btn.textContent = 'Guardar mi ubicación actual';
+    btn.disabled = false;
+}
 
 // Click en botón admin
 document.getElementById('adminToggle').addEventListener('click', (e) => {
     e.preventDefault();
-    openLoginModal();
+    openLocationModal();
 });
 
 // Cerrar modal al hacer clic fuera
-document.getElementById('loginModal').addEventListener('click', (e) => {
-    if (e.target.id === 'loginModal') closeLoginModal();
+document.getElementById('locationModal').addEventListener('click', (e) => {
+    if (e.target.id === 'locationModal') closeLocationModal();
 });
 
 // ========================================
@@ -273,3 +358,4 @@ function escapeHtml(text) {
 // Inicialización
 // ========================================
 checkAdminStatus();
+checkLocationOnLoad();
