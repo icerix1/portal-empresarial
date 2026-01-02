@@ -286,13 +286,13 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     const config = {
-        // user: 'YOU_MUST_REPLACE_WITH_YOUR_FIREBASE_CONFIG_BELOW',
-        apiKey: "YOUR_API_KEY",
-        authDomain: "YOUR_AUTH_DOMAIN",
-        projectId: "YOUR_PROJECT_ID",
-        storageBucket: "YOUR_STORAGE_BUCKET",
-        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-        appId: "YOUR_APP_ID"
+        apiKey: "AIzaSyA8K0w-qTKs9WkcOoSSXLgjfiT8fMprR1g",
+        authDomain: "compresor-de-archivos-15e3a.firebaseapp.com",
+        projectId: "compresor-de-archivos-15e3a",
+        storageBucket: "compresor-de-archivos-15e3a.firebasestorage.app",
+        messagingSenderId: "1075076139650",
+        appId: "1:1075076139650:web:0ded5b31cecf72b10f429b",
+        measurementId: "G-PRTN16Q3SM"
     };
 
     // Initialize Firebase
@@ -301,6 +301,10 @@ document.addEventListener('DOMContentLoaded', function () {
         firebase.initializeApp(config);
         db = firebase.firestore();
         storage = firebase.storage();
+        // Hide warning if successful
+        const warning = document.getElementById('firebase-warning');
+        if (warning) warning.style.display = 'none';
+        console.log("Firebase initialized successfully");
     } catch (e) {
         console.error("Firebase Init Error:", e);
         document.getElementById('firebase-warning').style.display = 'flex';
