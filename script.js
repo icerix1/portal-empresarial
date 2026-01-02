@@ -199,11 +199,33 @@ document.addEventListener('DOMContentLoaded', function () {
                 isAdmin = true;
 
                 // Guardar UID del admin en Firestore
-                if (firebase.auth().currentUser) {
-                    const adminUid = firebase.auth().currentUser.uid;
-                    db.collection('config').doc('admin').set({ uid: adminUid })
-                        .then(() => console.log('Admin UID guardado en Firestore'))
-                        .catch(err => console.error('Error guardando admin UID:', err));
+                const auth = firebase.auth && firebase.auth();
+                if (auth) {
+                    const saveUid = (u) => {
+                        if (!u) {
+                            console.error('No hay usuario autenticado para guardar UID admin');
+                            return;
+                        }
+                        const adminUid = u.uid;
+                        db.collection('config').doc('admin').set({ uid: adminUid }, { merge: true })
+                            .then(() => console.log('Admin UID guardado en Firestore'))
+                            .catch(err => console.error('Error guardando admin UID:', err));
+                    };
+
+                    if (auth.currentUser) {
+                        saveUid(auth.currentUser);
+                    } else {
+                        const unsubscribe = auth.onAuthStateChanged((u) => {
+                            if (u) {
+                                try { unsubscribe(); } catch (e) { }
+                                saveUid(u);
+                            }
+                        });
+                        setTimeout(() => {
+                            try { unsubscribe(); } catch (e) { }
+                            saveUid(auth.currentUser);
+                        }, 5000);
+                    }
                 }
 
                 checkAdminStatus();
@@ -456,7 +478,12 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function handleFiles(files) {
-        console.log('Files to handle:', files);
+        const auth = firebase.auth && firebase.auth();
+        if (!auth || !auth.currentUser) {
+            console.error('❌ No hay usuario autenticado todavía. Espera 2 segundos y reintenta.');
+            alert('Esperá un momento: Firebase todavía está autenticando. Reintentá en 2 segundos.');
+            return;
+        }
         for (let file of files) {
             let path = [...currentPath];
             if (file.webkitRelativePath) {
@@ -498,21 +525,39 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function uploadFileToFirebase(file, pathArray) {
-        // Upload to Storage
+        const filesContainer = document.getElementById('filesContainer');
+        const progressRow = document.createElement('tr');
+        progressRow.className = 'upload-progress-row';
+        progressRow.innerHTML = `
+            <td colspan="4">
+                <div class="upload-progress">
+                    <span>⬆️ ${escapeHtml(file.name)}</span>
+                    <div class="progress-bar"><div class="progress-fill"></div></div>
+                    <span class="progress-percent">0%</span>
+                </div>
+            </td>
+        `;
+        if (filesContainer) filesContainer.appendChild(progressRow);
+
         const storageRef = storage.ref();
         const fileRef = storageRef.child(`uploads/${Date.now()}_${file.name}`);
+        const uploadTask = fileRef.put(file);
 
-        fileRef.put(file).on('state_changed',
-            (snapshot) => {
-                // Progreso: omitido para no saturar logs
+        uploadTask.on(
+            'state_changed',
+            (snap) => {
+                const progress = (snap.bytesTransferred / snap.totalBytes) * 100;
+                const progressFill = progressRow.querySelector('.progress-fill');
+                const progressPercent = progressRow.querySelector('.progress-percent');
+                if (progressFill) progressFill.style.width = progress + '%';
+                if (progressPercent) progressPercent.textContent = Math.round(progress) + '%';
             },
             (error) => {
                 console.error(`❌ Error uploading ${file.name}:`, error);
+                try { progressRow.remove(); } catch (e) { }
             },
             () => {
-                // Upload complete
-                snapshot.ref.getDownloadURL().then((downloadURL) => {
-                    // Save metadata to Firestore
+                uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
                     db.collection('files').add({
                         type: 'file',
                         name: file.name,
@@ -523,8 +568,10 @@ document.addEventListener('DOMContentLoaded', function () {
                         url: downloadURL
                     });
                     console.log(`✅ Uploaded: ${file.name}`);
+                    try { progressRow.remove(); } catch (e) { }
                 }).catch(err => {
                     console.error(`❌ Error getting download URL for ${file.name}:`, err);
+                    try { progressRow.remove(); } catch (e) { }
                 });
             }
         );
