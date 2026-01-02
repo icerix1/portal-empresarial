@@ -345,6 +345,18 @@ document.addEventListener('DOMContentLoaded', function () {
         if (filesContainer) filesContainer.innerHTML = '<tr class="loading-row"><td colspan="4">🔄 Cargando archivos...</td></tr>';
         if (blogsContainer) blogsContainer.innerHTML = '<p class="loading-message">🔄 Cargando publicaciones...</p>';
 
+        // Carga inicial rápida con get()
+        Promise.all([
+            db.collection('files').get(),
+            db.collection('posts').orderBy('id', 'desc').get()
+        ]).then(([filesSnapshot, postsSnapshot]) => {
+            uploadedFiles = filesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            blogPosts = postsSnapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
+            if (typeof window.renderFiles === 'function') window.renderFiles();
+            if (typeof window.renderBlogs === 'function') window.renderBlogs();
+        }).catch(handleListenerError);
+
+        // Activar listeners para actualizaciones en tiempo real
         db.collection('files').onSnapshot(
             (snapshot) => {
                 uploadedFiles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
