@@ -589,6 +589,106 @@ textarea.form-control {
 }
 
 /* ========================================
+   Flex Headers
+   ======================================== */
+.headers-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.btn-sm {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+/* ========================================
+   Breadcrumbs
+   ======================================== */
+.breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+    color: var(--secondary);
+    flex-wrap: wrap;
+}
+
+.breadcrumb-item {
+    cursor: pointer;
+    color: var(--primary);
+    font-weight: 500;
+}
+
+.breadcrumb-item:hover {
+    text-decoration: underline;
+}
+
+.breadcrumb-separator {
+    color: var(--text-muted);
+}
+
+.breadcrumb-current {
+    color: var(--text-dark);
+    font-weight: 600;
+    cursor: default;
+}
+
+.breadcrumb-current:hover {
+    text-decoration: none;
+}
+
+/* ========================================
+   Table & Icons
+   ======================================== */
+.file-icon {
+    margin-right: 0.5rem;
+    font-size: 1.1rem;
+    vertical-align: middle;
+}
+
+.icon-folder {
+    color: #eab308;
+}
+
+.icon-file {
+    color: #6b7280;
+}
+
+.file-name {
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.file-name.is-folder:hover {
+    color: var(--primary);
+}
+
+.actions-cell {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 0.25rem;
+    color: var(--secondary);
+    transition: var(--transition);
+}
+
+.btn-icon:hover {
+    color: var(--primary);
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+}
+
+/* ========================================
    Responsive
    ======================================== */
 @media (max-width: 640px) {

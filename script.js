@@ -38,7 +38,10 @@ const translations = {
         admin: 'Admin',
         completeFields: 'Complete todos los campos',
         writeCommentAlert: 'Escribe un comentario',
-        selectFolder: 'Subir Carpeta'
+        selectFolder: 'Subir Carpeta',
+        deleteAll: 'Eliminar Todo',
+        deleteAllConfirm: '¿Estás seguro de que quieres eliminar TODOS los archivos? Esta acción no se puede deshacer.',
+        download: 'Descargar'
     },
     en: {
         portal: 'Business Portal',
@@ -76,7 +79,10 @@ const translations = {
         admin: 'Admin',
         completeFields: 'Please complete all fields',
         writeCommentAlert: 'Please write a comment',
-        selectFolder: 'Upload Folder'
+        selectFolder: 'Upload Folder',
+        deleteAll: 'Delete All',
+        deleteAllConfirm: 'Are you sure you want to delete ALL files? This action cannot be undone.',
+        download: 'Download'
     }
 };
 
@@ -280,13 +286,25 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // ========================================
-    // File Management
+    // File Management (Virtual File System)
     // ========================================
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const folderInput = document.getElementById('folderInput');
+
+    // State
+    let currentPath = []; // Array of folder names
     let uploadedFiles = JSON.parse(localStorage.getItem('uploadedFiles')) || [];
 
+    // Ensure backwards compatibility (add path/type if missing)
+    uploadedFiles = uploadedFiles.map(f => ({
+        ...f,
+        type: f.type || 'file',
+        path: f.path || [], // root
+        parentId: f.parentId || 'root'
+    }));
+
+    // --- Drop Zone Listeners ---
     if (dropZone) {
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
         dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -294,65 +312,52 @@ document.addEventListener('DOMContentLoaded', function () {
             e.preventDefault();
             dropZone.classList.remove('dragover');
             if (isAdmin) {
-                // Use items API for folders
                 const items = e.dataTransfer.items;
-                if (items) {
-                    processItems(items);
-                } else {
-                    handleFiles(e.dataTransfer.files);
-                }
+                if (items) processItems(items);
+                else handleFiles(e.dataTransfer.files);
             }
         });
-        // Click handled by buttons now
+        // Click handled by buttons
     }
 
-    if (fileInput) {
-        fileInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
-    }
+    if (fileInput) fileInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
+    if (folderInput) folderInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
 
-    if (folderInput) {
-        folderInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
-    }
-
-    // Process drag&drop items
+    // --- File Processing ---
     function processItems(items) {
         let entryPromises = [];
         for (let i = 0; i < items.length; i++) {
             let item = items[i];
             if (item.kind === 'file') {
                 let entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-                if (entry) {
-                    entryPromises.push(traverseFileTree(entry));
-                }
+                if (entry) entryPromises.push(traverseFileTree(entry, currentPath));
             }
         }
-
         Promise.all(entryPromises).then(() => {
             saveFiles();
             window.renderFiles();
         });
     }
 
-    // Recursive directory traversal
-    function traverseFileTree(item, path = '') {
+    function traverseFileTree(item, path) {
         return new Promise((resolve) => {
             if (item.isFile) {
                 item.file((file) => {
-                    addFileToList(file, path + file.name);
+                    addFileToVFS(file, path);
                     resolve();
                 });
             } else if (item.isDirectory) {
                 let dirReader = item.createReader();
                 let entries = [];
-
                 const readEntries = () => {
                     dirReader.readEntries((result) => {
                         if (result.length > 0) {
                             entries = entries.concat(result);
-                            readEntries(); // Continue reading
+                            readEntries();
                         } else {
-                            // Done reading directory
-                            let promises = entries.map(entry => traverseFileTree(entry, path + item.name + '/'));
+                            let newPath = [...path, item.name];
+                            ensureFolderExists(newPath);
+                            let promises = entries.map(entry => traverseFileTree(entry, newPath));
                             Promise.all(promises).then(resolve);
                         }
                     });
@@ -364,61 +369,267 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function handleFiles(files) {
         for (let file of files) {
-            // Check if webkitRelativePath exists (from folder input)
-            const name = file.webkitRelativePath || file.name;
-            addFileToList(file, name);
+            let path = [...currentPath];
+            if (file.webkitRelativePath) {
+                const parts = file.webkitRelativePath.split('/');
+                parts.pop();
+                if (parts.length > 0) {
+                    path = [...currentPath, ...parts];
+                    let tempPath = [...currentPath];
+                    for (let part of parts) {
+                        tempPath.push(part);
+                        ensureFolderExists(tempPath);
+                    }
+                }
+            }
+            addFileToVFS(file, path);
         }
         saveFiles();
         window.renderFiles();
     }
 
-    function addFileToList(file, displayName) {
+    function ensureFolderExists(pathArray) {
+        const parentPath = pathArray.slice(0, -1);
+        const folderName = pathArray[pathArray.length - 1];
+
+        const exists = uploadedFiles.some(f =>
+            f.type === 'folder' &&
+            f.name === folderName &&
+            JSON.stringify(f.path) === JSON.stringify(parentPath)
+        );
+
+        if (!exists) {
+            uploadedFiles.push({
+                id: 'folder-' + Date.now() + Math.random(),
+                type: 'folder',
+                name: folderName,
+                size: '-',
+                date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+                path: parentPath
+            });
+        }
+    }
+
+    function addFileToVFS(file, pathArray) {
         uploadedFiles.push({
             id: Date.now() + Math.random(),
-            name: displayName,
+            type: 'file',
+            name: file.name,
             size: formatFileSize(file.size),
-            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US')
+            rawSize: file.size,
+            path: pathArray,
+            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+            content: null
         });
+
+        // Try to save content (limit to small files to prevent quota errors)
+        if (file.size < 2.5 * 1024 * 1024) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const fileEntry = uploadedFiles.find(f => f.id === uploadedFiles[uploadedFiles.length - 1].id);
+                if (fileEntry) {
+                    fileEntry.content = e.target.result;
+                    try {
+                        saveFiles();
+                    } catch (e) {
+                        console.warn('Storage quota exceeded');
+                        fileEntry.content = null;
+                        saveFiles();
+                    }
+                }
+            };
+            reader.readAsDataURL(file);
+        } else {
+            saveFiles();
+        }
+    }
+
+    // --- Rendering ---
+    window.renderFiles = function () {
+        const filesContainer = document.getElementById('filesContainer');
+        const breadcrumbs = document.getElementById('breadcrumbs');
+        if (!filesContainer) return;
+
+        // Breadcrumbs
+        renderBreadcrumbs(breadcrumbs);
+
+        // Filter items for current path
+        const items = uploadedFiles.filter(f => JSON.stringify(f.path) === JSON.stringify(currentPath));
+
+        // Sort: Folders first, then files
+        items.sort((a, b) => {
+            if (a.type === b.type) return a.name.localeCompare(b.name);
+            return a.type === 'folder' ? -1 : 1;
+        });
+
+        if (items.length === 0) {
+            filesContainer.innerHTML = `<tr class="empty-row"><td colspan="4">${t('noFiles')}</td></tr>`;
+            return;
+        }
+
+        filesContainer.innerHTML = items.map(item => {
+            const icon = item.type === 'folder' ? '📁' : '📄';
+            const iconClass = item.type === 'folder' ? 'icon-folder' : 'icon-file';
+            const onclick = item.type === 'folder' ? `onclick="navigateTo('${item.name}')"` : '';
+            const actionBtn = item.type === 'folder'
+                ? `<button class="btn-icon" onclick="downloadFolder('${item.id}')" title="${t('download')}">⬇️</button>`
+                : `<button class="btn-icon" onclick="downloadFile('${item.id}')" title="${t('download')}">⬇️</button>`;
+
+            return `
+            <tr>
+                <td>
+                    <span class="file-icon ${iconClass}">${icon}</span>
+                    <span class="file-name ${item.type === 'folder' ? 'is-folder' : ''}" ${onclick}>${escapeHtml(item.name)}</span>
+                </td>
+                <td>${item.size}</td>
+                <td>${item.date}</td>
+                <td class="actions-cell">
+                    ${actionBtn}
+                    <button class="btn-icon ${isAdmin ? '' : 'hidden'}" onclick="deleteItem('${item.id}')" title="${t('delete')}">🗑️</button>
+                </td>
+            </tr>
+            `;
+        }).join('');
+    };
+
+    function renderBreadcrumbs(container) {
+        let html = `<span class="breadcrumb-item ${currentPath.length === 0 ? 'breadcrumb-current' : ''}" onclick="navigateToRoot()">🏠 Home</span>`;
+
+        currentPath.forEach((folder, index) => {
+            html += ` <span class="breadcrumb-separator">/</span> `;
+            const isLast = index === currentPath.length - 1;
+            if (isLast) {
+                html += `<span class="breadcrumb-current">${escapeHtml(folder)}</span>`;
+            } else {
+                html += `<span class="breadcrumb-item" onclick="navigateUpTo(${index})">${escapeHtml(folder)}</span>`;
+            }
+        });
+        container.innerHTML = html;
+    }
+
+    // --- Navigation Actions ---
+    window.navigateTo = function (folderName) {
+        currentPath.push(folderName);
+        window.renderFiles();
+    };
+
+    window.navigateToRoot = function () {
+        currentPath = [];
+        window.renderFiles();
+    };
+
+    window.navigateUpTo = function (index) {
+        currentPath = currentPath.slice(0, index + 1);
+        window.renderFiles();
+    };
+
+    // --- Download ---
+    window.downloadFile = function (id) {
+        const file = uploadedFiles.find(f => f.id == id);
+        if (!file || !file.content) {
+            alert('File content missing (storage limit?)');
+            return;
+        }
+        saveAs(file.content, file.name);
+    };
+
+    window.downloadFolder = function (id) {
+        const folder = uploadedFiles.find(f => f.id == id);
+        if (!folder) return;
+
+        const zip = new JSZip();
+        // folderFullPath = [...folder.path, folder.name]
+        const folderFullPath = [...folder.path, folder.name];
+
+        // Find items that start with this path (recursively)
+        const items = uploadedFiles.filter(f => {
+            if (f.type === 'folder') return false;
+            if (f.path.length < folderFullPath.length) return false;
+            for (let i = 0; i < folderFullPath.length; i++) {
+                if (f.path[i] !== folderFullPath[i]) return false;
+            }
+            return true;
+        });
+
+        if (items.length === 0) {
+            alert('Folder is empty');
+            return;
+        }
+
+        items.forEach(item => {
+            // Rel path
+            const relativePath = item.path.slice(folderFullPath.length);
+            const fileName = [...relativePath, item.name].join('/');
+
+            if (item.content) {
+                const base64 = item.content.split(',')[1];
+                zip.file(fileName, base64, { base64: true });
+            }
+        });
+
+        zip.generateAsync({ type: "blob" }).then(function (content) {
+            saveAs(content, folder.name + ".zip");
+        });
+    };
+
+    // --- Admin Actions ---
+    window.deleteItem = function (id) {
+        if (!isAdmin) return;
+        const item = uploadedFiles.find(f => f.id == id);
+        if (!item) return;
+
+        if (item.type === 'folder') {
+            if (!confirm(`Delete folder "${item.name}"?`)) return;
+            const folderFullPath = [...item.path, item.name];
+
+            uploadedFiles = uploadedFiles.filter(f => {
+                if (f.id == id) return false; // Delete folder entry
+
+                // Check descendant
+                if (f.path.length >= folderFullPath.length) {
+                    let match = true;
+                    for (let i = 0; i < folderFullPath.length; i++) {
+                        if (f.path[i] !== folderFullPath[i]) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match) return false;
+                }
+                return true;
+            });
+        } else {
+            uploadedFiles = uploadedFiles.filter(f => f.id != id);
+        }
+        saveFiles();
+        window.renderFiles();
+    };
+
+    window.deleteAllFiles = function () {
+        if (!isAdmin) return;
+        if (confirm(t('deleteAllConfirm'))) {
+            uploadedFiles = [];
+            currentPath = [];
+            saveFiles();
+            window.renderFiles();
+        }
+    };
+
+    function saveFiles() {
+        try {
+            localStorage.setItem('uploadedFiles', JSON.stringify(uploadedFiles));
+        } catch (e) {
+            console.error('Storage full');
+        }
     }
 
     function formatFileSize(bytes) {
+        if (!bytes || bytes === '-') return '-';
         if (bytes === 0) return '0 Bytes';
         const k = 1024;
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
-
-    window.renderFiles = function () {
-        const filesContainer = document.getElementById('filesContainer');
-        if (!filesContainer) return;
-
-        if (uploadedFiles.length === 0) {
-            filesContainer.innerHTML = `<tr class="empty-row"><td colspan="4">${t('noFiles')}</td></tr>`;
-            return;
-        }
-
-        filesContainer.innerHTML = uploadedFiles.map(file => `
-            <tr>
-                <td class="file-name">${escapeHtml(file.name)}</td>
-                <td>${file.size}</td>
-                <td>${file.date}</td>
-                <td class="${isAdmin ? '' : 'hidden'}">
-                    <button class="btn btn-danger" onclick="deleteFile(${file.id})">${t('delete')}</button>
-                </td>
-            </tr>
-        `).join('');
-    };
-
-    window.deleteFile = function (id) {
-        if (!isAdmin) return;
-        uploadedFiles = uploadedFiles.filter(f => f.id !== id);
-        saveFiles();
-        window.renderFiles();
-    };
-
-    function saveFiles() {
-        localStorage.setItem('uploadedFiles', JSON.stringify(uploadedFiles));
     }
 
     // ========================================

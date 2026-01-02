@@ -42,8 +42,10 @@
                 </div>
 
                 <div class="card admin-only" id="uploadCard">
-                    <div class="card-header">
+                    <div class="card-header headers-flex">
                         <h2 data-i18n="uploadFile">Subir Archivo</h2>
+                        <button class="btn btn-danger btn-sm" onclick="deleteAllFiles()" data-i18n="deleteAll">Eliminar
+                            Todo</button>
                     </div>
                     <div class="card-body">
                         <div class="upload-area" id="dropZone">
@@ -79,6 +81,7 @@
                         <h2 data-i18n="availableFiles">Archivos Disponibles</h2>
                     </div>
                     <div class="card-body">
+                        <div class="breadcrumbs" id="breadcrumbs"></div>
                         <div class="table-container">
                             <table class="table" id="filesTable">
                                 <thead>
@@ -86,7 +89,7 @@
                                         <th data-i18n="name">Nombre</th>
                                         <th data-i18n="size">Tamaño</th>
                                         <th data-i18n="date">Fecha</th>
-                                        <th class="admin-only-header" data-i18n="actions">Acciones</th>
+                                        <th data-i18n="actions">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="filesContainer">
@@ -151,6 +154,8 @@
         </div>
     </footer>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="script.js"></script>
 </body>
 
