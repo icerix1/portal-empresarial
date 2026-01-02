@@ -154,6 +154,21 @@
         </div>
     </footer>
 
+    <div id="firebase-warning"
+        style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; color:white; justify-content:center; align-items:center; flex-direction:column; text-align:center;">
+        <div style="background:#222; padding:30px; border-radius:10px; max-width:500px;">
+            <h2>⚠️ Firebase Config Required</h2>
+            <p>Please configure Firebase in script.js to continue.</p>
+            <button class="btn btn-primary"
+                onclick="document.getElementById('firebase-warning').style.display='none'">Understanding</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-storage-compat.js"></script>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="script.js"></script>

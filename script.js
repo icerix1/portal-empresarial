@@ -285,24 +285,45 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    const config = {
+        // user: 'YOU_MUST_REPLACE_WITH_YOUR_FIREBASE_CONFIG_BELOW',
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_AUTH_DOMAIN",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_STORAGE_BUCKET",
+        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
+
+    // Initialize Firebase
+    let db, storage;
+    try {
+        firebase.initializeApp(config);
+        db = firebase.firestore();
+        storage = firebase.storage();
+    } catch (e) {
+        console.error("Firebase Init Error:", e);
+        document.getElementById('firebase-warning').style.display = 'flex';
+    }
+
     // ========================================
-    // File Management (Virtual File System)
+    // File Management (Firebase)
     // ========================================
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const folderInput = document.getElementById('folderInput');
 
     // State
-    let currentPath = []; // Array of folder names
-    let uploadedFiles = JSON.parse(localStorage.getItem('uploadedFiles')) || [];
+    let currentPath = [];
+    let uploadedFiles = [];
 
-    // Ensure backwards compatibility (add path/type if missing)
-    uploadedFiles = uploadedFiles.map(f => ({
-        ...f,
-        type: f.type || 'file',
-        path: f.path || [], // root
-        parentId: f.parentId || 'root'
-    }));
+    // Real-time listener
+    if (db) {
+        db.collection('files').onSnapshot((snapshot) => {
+            uploadedFiles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            window.renderFiles();
+        });
+    }
 
     // --- Drop Zone Listeners ---
     if (dropZone) {
@@ -317,7 +338,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 else handleFiles(e.dataTransfer.files);
             }
         });
-        // Click handled by buttons
     }
 
     if (fileInput) fileInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
@@ -334,8 +354,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
         Promise.all(entryPromises).then(() => {
-            saveFiles();
-            window.renderFiles();
+            // No need to call saveFiles or renderFiles here, onSnapshot will handle it
         });
     }
 
@@ -343,7 +362,7 @@ document.addEventListener('DOMContentLoaded', function () {
         return new Promise((resolve) => {
             if (item.isFile) {
                 item.file((file) => {
-                    addFileToVFS(file, path);
+                    uploadFileToFirebase(file, path);
                     resolve();
                 });
             } else if (item.isDirectory) {
@@ -382,10 +401,8 @@ document.addEventListener('DOMContentLoaded', function () {
                     }
                 }
             }
-            addFileToVFS(file, path);
+            uploadFileToFirebase(file, path);
         }
-        saveFiles();
-        window.renderFiles();
     }
 
     function ensureFolderExists(pathArray) {
@@ -399,49 +416,39 @@ document.addEventListener('DOMContentLoaded', function () {
         );
 
         if (!exists) {
-            uploadedFiles.push({
-                id: 'folder-' + Date.now() + Math.random(),
+            db.collection('files').add({
                 type: 'folder',
                 name: folderName,
                 size: '-',
                 date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-                path: parentPath
+                path: parentPath,
+                parentId: 'virtual' // For simpler queries later if needed
             });
         }
     }
 
-    function addFileToVFS(file, pathArray) {
-        uploadedFiles.push({
-            id: Date.now() + Math.random(),
-            type: 'file',
-            name: file.name,
-            size: formatFileSize(file.size),
-            rawSize: file.size,
-            path: pathArray,
-            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-            content: null
-        });
+    function uploadFileToFirebase(file, pathArray) {
+        // Upload to Storage
+        const storageRef = storage.ref();
+        const fileRef = storageRef.child(`uploads/${Date.now()}_${file.name}`);
 
-        // Try to save content (limit to small files to prevent quota errors)
-        if (file.size < 2.5 * 1024 * 1024) {
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                const fileEntry = uploadedFiles.find(f => f.id === uploadedFiles[uploadedFiles.length - 1].id);
-                if (fileEntry) {
-                    fileEntry.content = e.target.result;
-                    try {
-                        saveFiles();
-                    } catch (e) {
-                        console.warn('Storage quota exceeded');
-                        fileEntry.content = null;
-                        saveFiles();
-                    }
-                }
-            };
-            reader.readAsDataURL(file);
-        } else {
-            saveFiles();
-        }
+        fileRef.put(file).then((snapshot) => {
+            snapshot.ref.getDownloadURL().then((downloadURL) => {
+                // Save metadata to Firestore
+                db.collection('files').add({
+                    type: 'file',
+                    name: file.name,
+                    size: formatFileSize(file.size), // String format
+                    rawSize: file.size,
+                    path: pathArray,
+                    date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+                    url: downloadURL
+                });
+            });
+        }).catch(error => {
+            console.error("Upload failed:", error);
+            alert("Error uploading file: " + error.message);
+        });
     }
 
     // --- Rendering ---
@@ -473,7 +480,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const onclick = item.type === 'folder' ? `onclick="navigateTo('${item.name}')"` : '';
             const actionBtn = item.type === 'folder'
                 ? `<button class="btn-icon" onclick="downloadFolder('${item.id}')" title="${t('download')}">⬇️</button>`
-                : `<button class="btn-icon" onclick="downloadFile('${item.id}')" title="${t('download')}">⬇️</button>`;
+                : `<a href="${item.url}" target="_blank" class="btn-icon" title="${t('download')}" download>⬇️</a>`;
 
             return `
             <tr>
@@ -524,21 +531,11 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     // --- Download ---
-    window.downloadFile = function (id) {
-        const file = uploadedFiles.find(f => f.id == id);
-        if (!file || !file.content) {
-            alert('File content missing (storage limit?)');
-            return;
-        }
-        saveAs(file.content, file.name);
-    };
-
     window.downloadFolder = function (id) {
         const folder = uploadedFiles.find(f => f.id == id);
         if (!folder) return;
 
         const zip = new JSZip();
-        // folderFullPath = [...folder.path, folder.name]
         const folderFullPath = [...folder.path, folder.name];
 
         // Find items that start with this path (recursively)
@@ -556,19 +553,28 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
+        let promises = [];
         items.forEach(item => {
-            // Rel path
             const relativePath = item.path.slice(folderFullPath.length);
             const fileName = [...relativePath, item.name].join('/');
 
-            if (item.content) {
-                const base64 = item.content.split(',')[1];
-                zip.file(fileName, base64, { base64: true });
+            // Need to fetch blob from URL (CORS must be enabled on Firebase Storage)
+            if (item.url) {
+                promises.push(
+                    fetch(item.url)
+                        .then(res => res.blob())
+                        .then(blob => {
+                            zip.file(fileName, blob);
+                        })
+                        .catch(err => console.error("Could not download file for zip:", err))
+                );
             }
         });
 
-        zip.generateAsync({ type: "blob" }).then(function (content) {
-            saveAs(content, folder.name + ".zip");
+        Promise.all(promises).then(() => {
+            zip.generateAsync({ type: "blob" }).then(function (content) {
+                saveAs(content, folder.name + ".zip");
+            });
         });
     };
 
@@ -582,10 +588,9 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!confirm(`Delete folder "${item.name}"?`)) return;
             const folderFullPath = [...item.path, item.name];
 
-            uploadedFiles = uploadedFiles.filter(f => {
-                if (f.id == id) return false; // Delete folder entry
-
-                // Check descendant
+            // Delete recursive locally logic applied to DB
+            // 1. Find all children
+            const children = uploadedFiles.filter(f => {
                 if (f.path.length >= folderFullPath.length) {
                     let match = true;
                     for (let i = 0; i < folderFullPath.length; i++) {
@@ -594,34 +599,35 @@ document.addEventListener('DOMContentLoaded', function () {
                             break;
                         }
                     }
-                    if (match) return false;
+                    return match;
                 }
-                return true;
+                return false;
             });
+
+            // 2. Delete all children + folder itself
+            const batch = db.batch();
+            children.forEach(child => {
+                batch.delete(db.collection('files').doc(child.id));
+                // TODO: Delete actual file from storage? That requires cloud functions or client loop
+            });
+            batch.delete(db.collection('files').doc(id));
+            batch.commit();
+
         } else {
-            uploadedFiles = uploadedFiles.filter(f => f.id != id);
+            db.collection('files').doc(id).delete();
+            // TODO: Delete from storage
         }
-        saveFiles();
-        window.renderFiles();
     };
 
     window.deleteAllFiles = function () {
         if (!isAdmin) return;
         if (confirm(t('deleteAllConfirm'))) {
-            uploadedFiles = [];
-            currentPath = [];
-            saveFiles();
-            window.renderFiles();
+            // For small datasets, client side loop is fine
+            uploadedFiles.forEach(f => {
+                db.collection('files').doc(f.id).delete();
+            });
         }
     };
-
-    function saveFiles() {
-        try {
-            localStorage.setItem('uploadedFiles', JSON.stringify(uploadedFiles));
-        } catch (e) {
-            console.error('Storage full');
-        }
-    }
 
     function formatFileSize(bytes) {
         if (!bytes || bytes === '-') return '-';
@@ -633,9 +639,16 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ========================================
-    // Blog Management with Comments
+    // Blog Management (Firebase)
     // ========================================
-    let blogPosts = JSON.parse(localStorage.getItem('blogPosts')) || [];
+    let blogPosts = [];
+
+    if (db) {
+        db.collection('posts').orderBy('id', 'desc').onSnapshot(snapshot => {
+            blogPosts = snapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
+            window.renderBlogs();
+        });
+    }
 
     window.publishBlog = function () {
         if (!isAdmin) return;
@@ -647,7 +660,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        blogPosts.unshift({
+        db.collection('posts').add({
             id: Date.now(),
             title,
             content,
@@ -655,8 +668,6 @@ document.addEventListener('DOMContentLoaded', function () {
             comments: []
         });
 
-        saveBlogs();
-        window.renderBlogs();
         document.getElementById('blogTitle').value = '';
         document.getElementById('blogContent').value = '';
     };
@@ -677,7 +688,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     <span class="post-date">${post.date}</span>
                 </div>
                 <p class="post-content">${escapeHtml(post.content)}</p>
-                ${isAdmin ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog(${post.id})">${t('delete')}</button></div>` : ''}
+                ${isAdmin ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${post.firebaseId}')">${t('delete')}</button></div>` : ''}
                 
                 <div class="comments-section">
                     <h4 class="comments-title">💬 ${t('comments')} (${post.comments ? post.comments.length : 0})</h4>
@@ -687,7 +698,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <div class="comment-header">
                                     <span class="comment-author">${escapeHtml(c.author)}${c.isAdmin ? ` <span class="admin-badge">${t('admin')}</span>` : ''}</span>
                                     <span class="comment-date">${c.date}</span>
-                                    ${isAdmin ? `<button class="btn-delete-comment" onclick="deleteComment(${post.id}, ${idx})">×</button>` : ''}
+                                    ${isAdmin ? `<button class="btn-delete-comment" onclick="deleteComment('${post.firebaseId}', ${idx})">×</button>` : ''}
                                 </div>
                                 <p class="comment-text">${escapeHtml(c.text)}</p>
                             </div>
@@ -695,57 +706,58 @@ document.addEventListener('DOMContentLoaded', function () {
                     </div>
                     <div class="comment-form">
                         <input type="text" class="form-control comment-author-input" id="author-${post.id}" placeholder="${t('yourName')}" maxlength="30">
-                        <textarea class="form-control comment-text-input" id="comment-${post.id}" placeholder="${t('writeComment')}" rows="2"></textarea>
-                        <button class="btn btn-primary btn-comment" onclick="addComment(${post.id})">${t('comment')}</button>
+                        <input type="text" class="form-control comment-input" id="comment-${post.id}" placeholder="${t('writeComment')}" onkeypress="handleComment(event, '${post.firebaseId}', ${post.id})">
+                        <button class="btn btn-sm btn-primary" onclick="addComment('${post.firebaseId}', ${post.id})">${t('send')}</button>
                     </div>
                 </div>
             </div>
         `).join('');
     };
 
-    window.addComment = function (postId) {
-        const authorInput = document.getElementById(`author-${postId}`);
-        const textInput = document.getElementById(`comment-${postId}`);
-        const author = authorInput.value.trim() || t('anonymous');
-        const text = textInput.value.trim();
+    window.handleComment = function (e, firebaseId, postId) {
+        if (e.key === 'Enter') addComment(firebaseId, postId);
+    };
 
+    window.addComment = function (firebaseId, postId) {
+        const authorInput = document.getElementById(`author-${postId}`);
+        const input = document.getElementById(`comment-${postId}`);
+        const text = input.value.trim();
+        let author = authorInput.value.trim();
+
+        if (!author) author = t('anonymous');
         if (!text) { alert(t('writeCommentAlert')); return; }
 
-        const post = blogPosts.find(p => p.id === postId);
-        if (!post) return;
-        if (!post.comments) post.comments = [];
+        const postRef = db.collection('posts').doc(firebaseId);
 
-        post.comments.push({
-            author,
-            text,
-            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-            isAdmin
+        // Firestore arrayUnion to add comment
+        postRef.update({
+            comments: firebase.firestore.FieldValue.arrayUnion({
+                author,
+                text,
+                date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+                isAdmin
+            })
         });
-
-        saveBlogs();
-        window.renderBlogs();
     };
 
-    window.deleteComment = function (postId, idx) {
+    window.deleteComment = function (firebaseId, idx) {
         if (!isAdmin) return;
-        const post = blogPosts.find(p => p.id === postId);
-        if (post && post.comments) {
-            post.comments.splice(idx, 1);
-            saveBlogs();
-            window.renderBlogs();
-        }
+        const post = blogPosts.find(p => p.firebaseId === firebaseId);
+        if (!post) return;
+
+        // Need to read current comments, splice, update (primitive way but simple for array)
+        // Better way: unique ID for comments, but arrayUnion/Remove needs exact object match
+        // We'll just update the whole array
+        const newComments = [...post.comments];
+        newComments.splice(idx, 1);
+
+        db.collection('posts').doc(firebaseId).update({ comments: newComments });
     };
 
-    window.deleteBlog = function (id) {
+    window.deleteBlog = function (firebaseId) {
         if (!isAdmin) return;
-        blogPosts = blogPosts.filter(p => p.id !== id);
-        saveBlogs();
-        window.renderBlogs();
+        db.collection('posts').doc(firebaseId).delete();
     };
-
-    function saveBlogs() {
-        localStorage.setItem('blogPosts', JSON.stringify(blogPosts));
-    }
 
     function escapeHtml(text) {
         const div = document.createElement('div');
