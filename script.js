@@ -311,24 +311,61 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('firebase-warning').style.display = 'flex';
     }
 
+    // State
+    let currentPath = [];
+    let uploadedFiles = [];
+    let blogPosts = [];
+    let listenersStarted = false;
+    let permissionAlertShown = false;
+
+    function handleListenerError(error) {
+        console.error("Firestore listener error:", error);
+        if (!permissionAlertShown && error && error.code === 'permission-denied') {
+            permissionAlertShown = true;
+            alert('FirebaseError: Missing or insufficient permissions. Revisa las reglas de Firestore y/o habilita Anonymous Auth.');
+        }
+    }
+
+    function startRealtimeListeners() {
+        if (!db || listenersStarted) return;
+        listenersStarted = true;
+
+        db.collection('files').onSnapshot(
+            (snapshot) => {
+                uploadedFiles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                if (typeof window.renderFiles === 'function') window.renderFiles();
+            },
+            handleListenerError
+        );
+
+        db.collection('posts').orderBy('id', 'desc').onSnapshot(
+            (snapshot) => {
+                blogPosts = snapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
+                if (typeof window.renderBlogs === 'function') window.renderBlogs();
+            },
+            handleListenerError
+        );
+    }
+
+    if (db && firebase.auth) {
+        const auth = firebase.auth();
+        auth.onAuthStateChanged((user) => {
+            if (user) startRealtimeListeners();
+        });
+        auth.signInAnonymously().catch((error) => {
+            console.error("Anonymous sign-in failed:", error);
+            startRealtimeListeners();
+        });
+    } else {
+        startRealtimeListeners();
+    }
+
     // ========================================
     // File Management (Firebase)
     // ========================================
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const folderInput = document.getElementById('folderInput');
-
-    // State
-    let currentPath = [];
-    let uploadedFiles = [];
-
-    // Real-time listener
-    if (db) {
-        db.collection('files').onSnapshot((snapshot) => {
-            uploadedFiles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            window.renderFiles();
-        });
-    }
 
     // --- Drop Zone Listeners ---
     if (dropZone) {
@@ -646,14 +683,6 @@ document.addEventListener('DOMContentLoaded', function () {
     // ========================================
     // Blog Management (Firebase)
     // ========================================
-    let blogPosts = [];
-
-    if (db) {
-        db.collection('posts').orderBy('id', 'desc').onSnapshot(snapshot => {
-            blogPosts = snapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
-            window.renderBlogs();
-        });
-    }
 
     window.publishBlog = function () {
         if (!isAdmin) return;
