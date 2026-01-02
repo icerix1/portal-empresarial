@@ -301,6 +301,7 @@ document.addEventListener('DOMContentLoaded', function () {
         firebase.initializeApp(config);
         db = firebase.firestore();
         storage = firebase.storage();
+
         // Hide warning if successful
         const warning = document.getElementById('firebase-warning');
         if (warning) warning.style.display = 'none';
