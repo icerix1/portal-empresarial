@@ -15,33 +15,35 @@
         <div class="header-container">
             <div class="logo">
                 <div class="logo-icon">P</div>
-                <span class="logo-text">Portal Empresarial</span>
+                <span class="logo-text" data-i18n="portal">Portal Empresarial</span>
             </div>
             <nav class="nav">
-                <a href="#" class="nav-link active" data-tab="archivos">Documentos</a>
-                <a href="#" class="nav-link" data-tab="blogs">Publicaciones</a>
+                <a href="#" class="nav-link active" data-tab="archivos" data-i18n="documents">Documentos</a>
+                <a href="#" class="nav-link" data-tab="blogs" data-i18n="publications">Publicaciones</a>
+                <button class="btn-lang" id="langToggle" title="Change language">
+                    🌐 <span id="currentLang">ES</span>
+                </button>
             </nav>
         </div>
     </header>
 
     <main class="main">
         <div class="container">
-            <!-- Indicador de modo admin (solo visible para admin) -->
-            <div class="admin-banner" id="adminBanner">
+            <!-- Admin banner -->
+            <div class="admin-banner" id="adminBanner" data-i18n="adminMode">
                 🔐 Modo Administrador activo
             </div>
 
             <!-- Sección de Documentos -->
             <section id="archivos" class="tab-content active">
                 <div class="page-header">
-                    <h1>Gestión de Documentos</h1>
-                    <p>Archivos disponibles para descarga</p>
+                    <h1 data-i18n="docManagement">Gestión de Documentos</h1>
+                    <p data-i18n="filesAvailable">Archivos disponibles para descarga</p>
                 </div>
 
-                <!-- Solo visible para admin -->
                 <div class="card admin-only" id="uploadCard">
                     <div class="card-header">
-                        <h2>Subir Archivo</h2>
+                        <h2 data-i18n="uploadFile">Subir Archivo</h2>
                     </div>
                     <div class="card-body">
                         <div class="upload-area" id="dropZone">
@@ -52,10 +54,11 @@
                                     <polyline points="17 8 12 3 7 8" />
                                     <line x1="12" y1="3" x2="12" y2="15" />
                                 </svg>
-                                <h3>Arrastre sus archivos aquí</h3>
-                                <p>o haga clic para seleccionar</p>
+                                <h3 data-i18n="dragFiles">Arrastre sus archivos aquí</h3>
+                                <p data-i18n="orClickSelect">o haga clic para seleccionar</p>
                                 <input type="file" id="fileInput" hidden>
-                                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()"
+                                    data-i18n="selectFile">
                                     Seleccionar Archivo
                                 </button>
                             </div>
@@ -65,22 +68,22 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <h2>Archivos Disponibles</h2>
+                        <h2 data-i18n="availableFiles">Archivos Disponibles</h2>
                     </div>
                     <div class="card-body">
                         <div class="table-container">
                             <table class="table" id="filesTable">
                                 <thead>
                                     <tr>
-                                        <th>Nombre</th>
-                                        <th>Tamaño</th>
-                                        <th>Fecha</th>
-                                        <th class="admin-only-header">Acciones</th>
+                                        <th data-i18n="name">Nombre</th>
+                                        <th data-i18n="size">Tamaño</th>
+                                        <th data-i18n="date">Fecha</th>
+                                        <th class="admin-only-header" data-i18n="actions">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="filesContainer">
                                     <tr class="empty-row">
-                                        <td colspan="4">No hay archivos disponibles</td>
+                                        <td colspan="4" data-i18n="noFiles">No hay archivos disponibles</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -92,28 +95,29 @@
             <!-- Sección de Publicaciones -->
             <section id="blogs" class="tab-content">
                 <div class="page-header">
-                    <h1>Publicaciones</h1>
-                    <p>Contenido y novedades</p>
+                    <h1 data-i18n="publications">Publicaciones</h1>
+                    <p data-i18n="newsContent">Contenido y novedades</p>
                 </div>
 
-                <!-- Solo visible para admin -->
                 <div class="card admin-only" id="blogFormCard">
                     <div class="card-header">
-                        <h2>Nueva Publicación</h2>
+                        <h2 data-i18n="newPost">Nueva Publicación</h2>
                     </div>
                     <div class="card-body">
                         <form class="form" id="blogForm">
                             <div class="form-group">
-                                <label for="blogTitle">Título</label>
-                                <input type="text" id="blogTitle" class="form-control" placeholder="Ingrese el título">
+                                <label for="blogTitle" data-i18n="title">Título</label>
+                                <input type="text" id="blogTitle" class="form-control"
+                                    data-i18n-placeholder="enterTitle">
                             </div>
                             <div class="form-group">
-                                <label for="blogContent">Contenido</label>
+                                <label for="blogContent" data-i18n="content">Contenido</label>
                                 <textarea id="blogContent" class="form-control" rows="5"
-                                    placeholder="Escriba el contenido..."></textarea>
+                                    data-i18n-placeholder="writeContent"></textarea>
                             </div>
                             <div class="form-actions">
-                                <button type="button" class="btn btn-primary" onclick="publishBlog()">Publicar</button>
+                                <button type="button" class="btn btn-primary" onclick="publishBlog()"
+                                    data-i18n="publish">Publicar</button>
                             </div>
                         </form>
                     </div>
@@ -121,11 +125,11 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <h2>Publicaciones Recientes</h2>
+                        <h2 data-i18n="recentPosts">Publicaciones Recientes</h2>
                     </div>
                     <div class="card-body">
                         <div class="posts-list" id="blogsContainer">
-                            <p class="empty-message">No hay publicaciones disponibles</p>
+                            <p class="empty-message" data-i18n="noPosts">No hay publicaciones disponibles</p>
                         </div>
                     </div>
                 </div>
@@ -135,7 +139,7 @@
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2026 Portal Empresarial. Todos los derechos reservados.</p>
+            <p data-i18n="copyright">&copy; 2026 Portal Empresarial. Todos los derechos reservados.</p>
         </div>
     </footer>
 

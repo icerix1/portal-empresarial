@@ -108,6 +108,25 @@ body {
     background: rgba(26, 86, 219, 0.1);
 }
 
+.btn-lang {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--background);
+    border: 1px solid var(--border-dark);
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+    margin-left: 0.5rem;
+}
+
+.btn-lang:hover {
+    background: var(--border);
+}
+
 /* ========================================
    Admin Banner
    ======================================== */
