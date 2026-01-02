@@ -267,6 +267,26 @@ body {
 }
 
 /* ========================================
+   Upload Actions
+   ======================================== */
+.upload-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--primary);
+    color: var(--primary);
+}
+
+.btn-outline:hover {
+    background: rgba(26, 86, 219, 0.05);
+}
+
+/* ========================================
    Buttons
    ======================================== */
 .btn {

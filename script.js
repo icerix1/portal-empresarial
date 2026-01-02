@@ -37,7 +37,8 @@ const translations = {
         anonymous: 'Anónimo',
         admin: 'Admin',
         completeFields: 'Complete todos los campos',
-        writeCommentAlert: 'Escribe un comentario'
+        writeCommentAlert: 'Escribe un comentario',
+        selectFolder: 'Subir Carpeta'
     },
     en: {
         portal: 'Business Portal',
@@ -74,7 +75,8 @@ const translations = {
         anonymous: 'Anonymous',
         admin: 'Admin',
         completeFields: 'Please complete all fields',
-        writeCommentAlert: 'Please write a comment'
+        writeCommentAlert: 'Please write a comment',
+        selectFolder: 'Upload Folder'
     }
 };
 
@@ -282,6 +284,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // ========================================
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
     let uploadedFiles = JSON.parse(localStorage.getItem('uploadedFiles')) || [];
 
     if (dropZone) {
@@ -290,26 +293,92 @@ document.addEventListener('DOMContentLoaded', function () {
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('dragover');
-            if (isAdmin) handleFiles(e.dataTransfer.files);
+            if (isAdmin) {
+                // Use items API for folders
+                const items = e.dataTransfer.items;
+                if (items) {
+                    processItems(items);
+                } else {
+                    handleFiles(e.dataTransfer.files);
+                }
+            }
         });
-        dropZone.addEventListener('click', () => { if (isAdmin && fileInput) fileInput.click(); });
+        // Click handled by buttons now
     }
 
     if (fileInput) {
         fileInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
     }
 
+    if (folderInput) {
+        folderInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
+    }
+
+    // Process drag&drop items
+    function processItems(items) {
+        let entryPromises = [];
+        for (let i = 0; i < items.length; i++) {
+            let item = items[i];
+            if (item.kind === 'file') {
+                let entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                if (entry) {
+                    entryPromises.push(traverseFileTree(entry));
+                }
+            }
+        }
+
+        Promise.all(entryPromises).then(() => {
+            saveFiles();
+            window.renderFiles();
+        });
+    }
+
+    // Recursive directory traversal
+    function traverseFileTree(item, path = '') {
+        return new Promise((resolve) => {
+            if (item.isFile) {
+                item.file((file) => {
+                    addFileToList(file, path + file.name);
+                    resolve();
+                });
+            } else if (item.isDirectory) {
+                let dirReader = item.createReader();
+                let entries = [];
+
+                const readEntries = () => {
+                    dirReader.readEntries((result) => {
+                        if (result.length > 0) {
+                            entries = entries.concat(result);
+                            readEntries(); // Continue reading
+                        } else {
+                            // Done reading directory
+                            let promises = entries.map(entry => traverseFileTree(entry, path + item.name + '/'));
+                            Promise.all(promises).then(resolve);
+                        }
+                    });
+                };
+                readEntries();
+            }
+        });
+    }
+
     function handleFiles(files) {
         for (let file of files) {
-            uploadedFiles.push({
-                id: Date.now() + Math.random(),
-                name: file.name,
-                size: formatFileSize(file.size),
-                date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US')
-            });
+            // Check if webkitRelativePath exists (from folder input)
+            const name = file.webkitRelativePath || file.name;
+            addFileToList(file, name);
         }
         saveFiles();
         window.renderFiles();
+    }
+
+    function addFileToList(file, displayName) {
+        uploadedFiles.push({
+            id: Date.now() + Math.random(),
+            name: displayName,
+            size: formatFileSize(file.size),
+            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US')
+        });
     }
 
     function formatFileSize(bytes) {

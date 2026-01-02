@@ -56,11 +56,19 @@
                                 </svg>
                                 <h3 data-i18n="dragFiles">Arrastre sus archivos aquí</h3>
                                 <p data-i18n="orClickSelect">o haga clic para seleccionar</p>
-                                <input type="file" id="fileInput" hidden>
-                                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()"
-                                    data-i18n="selectFile">
-                                    Seleccionar Archivo
-                                </button>
+                                <input type="file" id="fileInput" hidden multiple>
+                                <input type="file" id="folderInput" hidden webkitdirectory directory multiple>
+                                <div class="upload-actions">
+                                    <button class="btn btn-primary"
+                                        onclick="document.getElementById('fileInput').click()" data-i18n="selectFile">
+                                        Seleccionar Archivo
+                                    </button>
+                                    <button class="btn btn-outline"
+                                        onclick="document.getElementById('folderInput').click()"
+                                        data-i18n="selectFolder">
+                                        Subir Carpeta
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
