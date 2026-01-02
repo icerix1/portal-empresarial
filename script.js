@@ -458,7 +458,6 @@ document.addEventListener('DOMContentLoaded', function () {
     function handleFiles(files) {
         console.log('Files to handle:', files);
         for (let file of files) {
-            console.log('Processing file:', file.name, file.type, file.size);
             let path = [...currentPath];
             if (file.webkitRelativePath) {
                 const parts = file.webkitRelativePath.split('/');
@@ -499,39 +498,16 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function uploadFileToFirebase(file, pathArray) {
-        console.log('Uploading file:', file.name, file.type, file.size, 'to path:', pathArray);
-        
-        // Mostrar progreso
-        const progressRow = document.createElement('tr');
-        progressRow.className = 'upload-progress-row';
-        progressRow.innerHTML = `
-            <td colspan="4">
-                <div class="upload-progress">
-                    <span>⬆️ ${escapeHtml(file.name)}</span>
-                    <div class="progress-bar"><div class="progress-fill"></div></div>
-                    <span class="progress-percent">0%</span>
-                </div>
-            </td>
-        `;
-        const filesContainer = document.getElementById('filesContainer');
-        if (filesContainer) filesContainer.appendChild(progressRow);
-
         // Upload to Storage
         const storageRef = storage.ref();
         const fileRef = storageRef.child(`uploads/${Date.now()}_${file.name}`);
 
         fileRef.put(file).on('state_changed',
             (snapshot) => {
-                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                const progressFill = progressRow.querySelector('.progress-fill');
-                const progressPercent = progressRow.querySelector('.progress-percent');
-                if (progressFill) progressFill.style.width = progress + '%';
-                if (progressPercent) progressPercent.textContent = Math.round(progress) + '%';
+                // Progreso: omitido para no saturar logs
             },
             (error) => {
-                console.error("Upload failed:", error);
-                alert("Error uploading file: " + error.message);
-                progressRow.remove();
+                console.error(`❌ Error uploading ${file.name}:`, error);
             },
             () => {
                 // Upload complete
@@ -546,12 +522,9 @@ document.addEventListener('DOMContentLoaded', function () {
                         date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
                         url: downloadURL
                     });
-                    console.log('File uploaded successfully:', file.name);
-                    progressRow.remove();
+                    console.log(`✅ Uploaded: ${file.name}`);
                 }).catch(err => {
-                    console.error('Error getting download URL:', err);
-                    alert('Error obteniendo URL de descarga: ' + err.message);
-                    progressRow.remove();
+                    console.error(`❌ Error getting download URL for ${file.name}:`, err);
                 });
             }
         );
