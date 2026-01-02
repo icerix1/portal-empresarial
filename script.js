@@ -423,16 +423,14 @@ document.addEventListener('DOMContentLoaded', function () {
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('dragover');
-            if (isAdmin) {
-                const items = e.dataTransfer.items;
-                if (items) processItems(items);
-                else handleFiles(e.dataTransfer.files);
-            }
+            const items = e.dataTransfer.items;
+            if (items) processItems(items);
+            else handleFiles(e.dataTransfer.files);
         });
     }
 
-    if (fileInput) fileInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
-    if (folderInput) folderInput.addEventListener('change', (e) => { if (isAdmin) handleFiles(e.target.files); });
+    if (fileInput) fileInput.addEventListener('change', (e) => { handleFiles(e.target.files); });
+    if (folderInput) folderInput.addEventListener('change', (e) => { handleFiles(e.target.files); });
 
     // --- File Processing ---
     function processItems(items) {
@@ -525,6 +523,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function uploadFileToFirebase(file, pathArray) {
+        const auth = firebase.auth && firebase.auth();
+        if (!auth || !auth.currentUser) {
+            console.error(`❌ No hay usuario autenticado todavía. No se puede subir ${file.name}.`);
+            return;
+        }
         const filesContainer = document.getElementById('filesContainer');
         const progressRow = document.createElement('tr');
         progressRow.className = 'upload-progress-row';
