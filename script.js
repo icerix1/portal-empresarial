@@ -456,7 +456,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function handleFiles(files) {
+        console.log('Files to handle:', files);
         for (let file of files) {
+            console.log('Processing file:', file.name, file.type, file.size);
             let path = [...currentPath];
             if (file.webkitRelativePath) {
                 const parts = file.webkitRelativePath.split('/');
@@ -497,6 +499,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function uploadFileToFirebase(file, pathArray) {
+        console.log('Uploading file:', file.name, file.type, file.size, 'to path:', pathArray);
+        
         // Mostrar progreso
         const progressRow = document.createElement('tr');
         progressRow.className = 'upload-progress-row';
@@ -542,6 +546,11 @@ document.addEventListener('DOMContentLoaded', function () {
                         date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
                         url: downloadURL
                     });
+                    console.log('File uploaded successfully:', file.name);
+                    progressRow.remove();
+                }).catch(err => {
+                    console.error('Error getting download URL:', err);
+                    alert('Error obteniendo URL de descarga: ' + err.message);
                     progressRow.remove();
                 });
             }
@@ -662,8 +671,10 @@ document.addEventListener('DOMContentLoaded', function () {
             return true;
         });
 
+        console.log('Items to download:', items);
+
         if (items.length === 0) {
-            alert('Folder is empty');
+            alert('La carpeta está vacía');
             return;
         }
 
@@ -672,15 +683,21 @@ document.addEventListener('DOMContentLoaded', function () {
             const relativePath = item.path.slice(folderFullPath.length);
             const fileName = [...relativePath, item.name].join('/');
 
-            // Need to fetch blob from URL (CORS must be enabled on Firebase Storage)
             if (item.url) {
                 promises.push(
-                    fetch(item.url)
-                        .then(res => res.blob())
+                    fetch(item.url, { mode: 'cors' })
+                        .then(res => {
+                            if (!res.ok) throw new Error(`Failed to fetch ${item.name}: ${res.status}`);
+                            return res.blob();
+                        })
                         .then(blob => {
                             zip.file(fileName, blob);
+                            console.log('Added to zip:', fileName);
                         })
-                        .catch(err => console.error("Could not download file for zip:", err))
+                        .catch(err => {
+                            console.error("Could not download file for zip:", err);
+                            alert(`Error descargando ${item.name}: ${err.message}`);
+                        })
                 );
             }
         });
@@ -688,7 +705,11 @@ document.addEventListener('DOMContentLoaded', function () {
         Promise.all(promises).then(() => {
             zip.generateAsync({ type: "blob" }).then(function (content) {
                 saveAs(content, folder.name + ".zip");
+                console.log('ZIP generated and saved');
             });
+        }).catch(err => {
+            console.error('Error generating ZIP:', err);
+            alert('Error generando el ZIP: ' + err.message);
         });
     };
 
