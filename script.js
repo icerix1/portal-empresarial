@@ -99,12 +99,12 @@ function updateLanguage() {
         }
     });
 
-    document.getElementById('currentLang').textContent = currentLang.toUpperCase();
+    const langEl = document.getElementById('currentLang');
+    if (langEl) langEl.textContent = currentLang.toUpperCase();
     document.documentElement.lang = currentLang;
 
-    // Re-render dynamic content
-    if (typeof renderFiles === 'function') renderFiles();
-    if (typeof renderBlogs === 'function') renderBlogs();
+    if (typeof window.renderFiles === 'function') window.renderFiles();
+    if (typeof window.renderBlogs === 'function') window.renderBlogs();
 }
 
 function toggleLanguage() {
@@ -114,10 +114,9 @@ function toggleLanguage() {
 }
 
 // ========================================
-// CONFIGURACIÓN DE UBICACIÓN ADMIN (ENCRIPTADA)
+// CONFIGURACIÓN ADMIN
 // ========================================
 const ADMIN_RADIUS_METERS = 150;
-const ENCODED_LOCATION = localStorage.getItem('_adminLocEnc') || null;
 
 function decodeLocation(encoded) {
     try {
@@ -134,19 +133,75 @@ function encodeLocation(lat, lon) {
 }
 
 let isAdmin = false;
-let adminLocation = ENCODED_LOCATION ? decodeLocation(ENCODED_LOCATION) : null;
+let adminLocation = null;
+
+// Cargar ubicación guardada
+const savedLoc = localStorage.getItem('_adminLocEnc');
+if (savedLoc) {
+    adminLocation = decodeLocation(savedLoc);
+}
 
 // ========================================
-// DOM Content Loaded
+// DOM Ready
 // ========================================
 document.addEventListener('DOMContentLoaded', function () {
 
-    // Language toggle button
-    document.getElementById('langToggle').addEventListener('click', toggleLanguage);
+    // Language toggle
+    const langBtn = document.getElementById('langToggle');
+    if (langBtn) langBtn.addEventListener('click', toggleLanguage);
     updateLanguage();
 
     // ========================================
-    // Admin Functions
+    // Triple-click en logo para setup admin
+    // ========================================
+    let clickCount = 0;
+    let clickTimer = null;
+    const logo = document.querySelector('.logo');
+
+    if (logo) {
+        logo.addEventListener('click', () => {
+            clickCount++;
+            if (clickTimer) clearTimeout(clickTimer);
+            clickTimer = setTimeout(() => { clickCount = 0; }, 600);
+
+            if (clickCount >= 3) {
+                clickCount = 0;
+                setupAdminLocation();
+            }
+        });
+    }
+
+    function setupAdminLocation() {
+        const password = prompt('Código de configuración:');
+        if (password !== 'setup2026') {
+            alert('Código incorrecto');
+            return;
+        }
+
+        if (!navigator.geolocation) {
+            alert('Tu navegador no soporta geolocalización');
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const encoded = encodeLocation(position.coords.latitude, position.coords.longitude);
+                localStorage.setItem('_adminLocEnc', encoded);
+                adminLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
+                isAdmin = true;
+                checkAdminStatus();
+                alert('✅ Ubicación admin guardada!\n\nAhora eres admin.');
+                console.log('Código encriptado:', encoded);
+            },
+            (error) => {
+                alert('Error al obtener ubicación: ' + error.message + '\n\nPermite el acceso a la ubicación.');
+            },
+            { enableHighAccuracy: true, timeout: 15000 }
+        );
+    }
+
+    // ========================================
+    // Admin Status
     // ========================================
     function checkAdminStatus() {
         const adminElements = document.querySelectorAll('.admin-only');
@@ -163,8 +218,8 @@ document.addEventListener('DOMContentLoaded', function () {
             if (adminBanner) adminBanner.style.display = 'none';
         }
 
-        renderFiles();
-        renderBlogs();
+        window.renderFiles();
+        window.renderBlogs();
     }
 
     function getDistanceMeters(lat1, lon1, lat2, lon2) {
@@ -179,27 +234,10 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function checkLocationOnLoad() {
-        if (!adminLocation) {
-            if (!ENCODED_LOCATION && navigator.geolocation) {
-                let clickCount = 0;
-                let clickTimer = null;
-                const logo = document.querySelector('.logo');
-                if (logo) {
-                    logo.addEventListener('click', () => {
-                        clickCount++;
-                        if (clickTimer) clearTimeout(clickTimer);
-                        clickTimer = setTimeout(() => { clickCount = 0; }, 500);
-                        if (clickCount >= 3) {
-                            clickCount = 0;
-                            setupAdminLocation();
-                        }
-                    });
-                }
-            }
+        if (!adminLocation || !navigator.geolocation) {
+            checkAdminStatus();
             return;
         }
-
-        if (!navigator.geolocation) return;
 
         navigator.geolocation.getCurrentPosition(
             (position) => {
@@ -209,33 +247,17 @@ document.addEventListener('DOMContentLoaded', function () {
                     adminLocation.lat,
                     adminLocation.lon
                 );
+                console.log('Distancia:', Math.round(distance), 'metros');
+
                 if (distance <= ADMIN_RADIUS_METERS) {
                     isAdmin = true;
-                    checkAdminStatus();
                 }
-            },
-            () => { },
-            { enableHighAccuracy: true, timeout: 10000 }
-        );
-    }
-
-    function setupAdminLocation() {
-        if (ENCODED_LOCATION) return;
-        const password = prompt('Setup code:');
-        if (password !== 'setup2026') return;
-
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const encoded = encodeLocation(position.coords.latitude, position.coords.longitude);
-                localStorage.setItem('_adminLocEnc', encoded);
-                adminLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
-                isAdmin = true;
                 checkAdminStatus();
-                alert('✅ Admin location saved!');
-                console.log('Encoded:', encoded);
             },
-            (error) => alert('Error: ' + error.message),
-            { enableHighAccuracy: true }
+            () => {
+                checkAdminStatus();
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
         );
     }
 
@@ -287,7 +309,7 @@ document.addEventListener('DOMContentLoaded', function () {
             });
         }
         saveFiles();
-        renderFiles();
+        window.renderFiles();
     }
 
     function formatFileSize(bytes) {
@@ -323,7 +345,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!isAdmin) return;
         uploadedFiles = uploadedFiles.filter(f => f.id !== id);
         saveFiles();
-        renderFiles();
+        window.renderFiles();
     };
 
     function saveFiles() {
@@ -354,7 +376,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         saveBlogs();
-        renderBlogs();
+        window.renderBlogs();
         document.getElementById('blogTitle').value = '';
         document.getElementById('blogContent').value = '';
     };
@@ -421,7 +443,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         saveBlogs();
-        renderBlogs();
+        window.renderBlogs();
     };
 
     window.deleteComment = function (postId, idx) {
@@ -430,7 +452,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (post && post.comments) {
             post.comments.splice(idx, 1);
             saveBlogs();
-            renderBlogs();
+            window.renderBlogs();
         }
     };
 
@@ -438,7 +460,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!isAdmin) return;
         blogPosts = blogPosts.filter(p => p.id !== id);
         saveBlogs();
-        renderBlogs();
+        window.renderBlogs();
     };
 
     function saveBlogs() {
@@ -451,7 +473,8 @@ document.addEventListener('DOMContentLoaded', function () {
         return div.innerHTML;
     }
 
+    // ========================================
     // Init
-    checkAdminStatus();
+    // ========================================
     checkLocationOnLoad();
 });
