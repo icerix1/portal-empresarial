@@ -197,6 +197,15 @@ document.addEventListener('DOMContentLoaded', function () {
                 localStorage.setItem('_adminLocEnc', encoded);
                 adminLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
                 isAdmin = true;
+
+                // Guardar UID del admin en Firestore
+                if (firebase.auth().currentUser) {
+                    const adminUid = firebase.auth().currentUser.uid;
+                    db.collection('config').doc('admin').set({ uid: adminUid })
+                        .then(() => console.log('Admin UID guardado en Firestore'))
+                        .catch(err => console.error('Error guardando admin UID:', err));
+                }
+
                 checkAdminStatus();
                 alert('✅ Ubicación admin guardada!\n\nAhora eres admin.');
                 console.log('Código encriptado:', encoded);
@@ -329,6 +338,12 @@ document.addEventListener('DOMContentLoaded', function () {
     function startRealtimeListeners() {
         if (!db || listenersStarted) return;
         listenersStarted = true;
+
+        // Mostrar indicadores de carga
+        const filesContainer = document.getElementById('filesContainer');
+        const blogsContainer = document.getElementById('blogsContainer');
+        if (filesContainer) filesContainer.innerHTML = '<tr class="loading-row"><td colspan="4">🔄 Cargando archivos...</td></tr>';
+        if (blogsContainer) blogsContainer.innerHTML = '<p class="loading-message">🔄 Cargando publicaciones...</p>';
 
         db.collection('files').onSnapshot(
             (snapshot) => {
@@ -470,30 +485,74 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function uploadFileToFirebase(file, pathArray) {
+        // Mostrar progreso
+        const progressRow = document.createElement('tr');
+        progressRow.className = 'upload-progress-row';
+        progressRow.innerHTML = `
+            <td colspan="4">
+                <div class="upload-progress">
+                    <span>⬆️ ${escapeHtml(file.name)}</span>
+                    <div class="progress-bar"><div class="progress-fill"></div></div>
+                    <span class="progress-percent">0%</span>
+                </div>
+            </td>
+        `;
+        const filesContainer = document.getElementById('filesContainer');
+        if (filesContainer) filesContainer.appendChild(progressRow);
+
         // Upload to Storage
         const storageRef = storage.ref();
         const fileRef = storageRef.child(`uploads/${Date.now()}_${file.name}`);
 
-        fileRef.put(file).then((snapshot) => {
-            snapshot.ref.getDownloadURL().then((downloadURL) => {
-                // Save metadata to Firestore
-                db.collection('files').add({
-                    type: 'file',
-                    name: file.name,
-                    size: formatFileSize(file.size), // String format
-                    rawSize: file.size,
-                    path: pathArray,
-                    date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-                    url: downloadURL
+        fileRef.put(file).on('state_changed',
+            (snapshot) => {
+                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                const progressFill = progressRow.querySelector('.progress-fill');
+                const progressPercent = progressRow.querySelector('.progress-percent');
+                if (progressFill) progressFill.style.width = progress + '%';
+                if (progressPercent) progressPercent.textContent = Math.round(progress) + '%';
+            },
+            (error) => {
+                console.error("Upload failed:", error);
+                alert("Error uploading file: " + error.message);
+                progressRow.remove();
+            },
+            () => {
+                // Upload complete
+                snapshot.ref.getDownloadURL().then((downloadURL) => {
+                    // Save metadata to Firestore
+                    db.collection('files').add({
+                        type: 'file',
+                        name: file.name,
+                        size: formatFileSize(file.size),
+                        rawSize: file.size,
+                        path: pathArray,
+                        date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+                        url: downloadURL
+                    });
+                    progressRow.remove();
                 });
-            });
-        }).catch(error => {
-            console.error("Upload failed:", error);
-            alert("Error uploading file: " + error.message);
-        });
+            }
+        );
     }
 
     // --- Rendering ---
+    function calculateFolderSize(folder) {
+        const folderFullPath = [...folder.path, folder.name];
+        const children = uploadedFiles.filter(f => {
+            if (f.path.length < folderFullPath.length) return false;
+            for (let i = 0; i < folderFullPath.length; i++) {
+                if (f.path[i] !== folderFullPath[i]) return false;
+            }
+            return true;
+        });
+        let totalSize = 0;
+        children.forEach(f => {
+            if (f.type === 'file' && f.rawSize) totalSize += f.rawSize;
+        });
+        return formatFileSize(totalSize);
+    }
+
     window.renderFiles = function () {
         const filesContainer = document.getElementById('filesContainer');
         const breadcrumbs = document.getElementById('breadcrumbs');
@@ -520,6 +579,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const icon = item.type === 'folder' ? '📁' : '📄';
             const iconClass = item.type === 'folder' ? 'icon-folder' : 'icon-file';
             const onclick = item.type === 'folder' ? `onclick="navigateTo('${item.name}')"` : '';
+            const size = item.type === 'folder' ? calculateFolderSize(item) : item.size;
             const actionBtn = item.type === 'folder'
                 ? `<button class="btn-icon" onclick="downloadFolder('${item.id}')" title="${t('download')}">⬇️</button>`
                 : `<a href="${item.url}" target="_blank" class="btn-icon" title="${t('download')}" download>⬇️</a>`;
@@ -530,7 +590,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     <span class="file-icon ${iconClass}">${icon}</span>
                     <span class="file-name ${item.type === 'folder' ? 'is-folder' : ''}" ${onclick}>${escapeHtml(item.name)}</span>
                 </td>
-                <td>${item.size}</td>
+                <td>${size}</td>
                 <td>${item.date}</td>
                 <td class="actions-cell">
                     ${actionBtn}

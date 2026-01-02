@@ -36,6 +36,49 @@ body {
 }
 
 /* ========================================
+   Progress Bar & Loading
+   ======================================== */
+.upload-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--primary);
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+.progress-percent {
+    font-size: 12px;
+    color: var(--text-muted);
+    min-width: 35px;
+    text-align: right;
+}
+
+.upload-progress-row {
+    background: rgba(26, 86, 219, 0.05);
+}
+
+.loading-row td, .loading-message {
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 20px;
+}
+
+/* ========================================
    Header
    ======================================== */
 .header {
