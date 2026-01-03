@@ -297,13 +297,6 @@ body {
     font-size: 0.95rem;
 }
 
-.page-actions {
-    margin-top: 1rem;
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-}
-
 .btn-paypal {
     border-color: #0070ba;
     color: #0070ba;
@@ -311,6 +304,12 @@ body {
 
 .btn-paypal:hover {
     background: rgba(0, 112, 186, 0.08);
+}
+
+.footer-donate {
+    display: flex;
+    justify-content: center;
+    margin: 0.5rem 0 1rem;
 }
 
 /* ========================================

@@ -88,7 +88,7 @@ const translations = {
     }
 };
 
-const PAYPAL_DONATION_URL = 'https://paypal.me/icerix1';
+const PAYPAL_DONATION_URL = 'https://paypal.me/TizianoSavoini';
 
 let currentLang = localStorage.getItem('lang') || 'es';
 
