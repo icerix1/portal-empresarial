@@ -393,6 +393,7 @@ document.addEventListener('DOMContentLoaded', function () {
         firebase.initializeApp(config);
         db = firebase.firestore();
         storage = firebase.storage();
+        try { db.enablePersistence({ synchronizeTabs: true }).catch(() => { }); } catch (e) { }
 
         // Hide warning if successful
         const warning = document.getElementById('firebase-warning');
@@ -405,11 +406,47 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // State
     let currentPath = [];
+    let currentPathKey = '';
     let uploadedFiles = [];
+    let uploadedFilesByPathKey = new Map();
+    let folderSizeBytesByPathKey = new Map();
     let blogPosts = [];
     let listenersStarted = false;
     let permissionAlertShown = false;
     let activeUploadSession = null;
+
+    function makePathKey(pathArray) {
+        const arr = Array.isArray(pathArray) ? pathArray : [];
+        if (arr.length === 0) return '';
+        return arr.map(v => String(v)).join('\u0001');
+    }
+
+    function rebuildFileCaches() {
+        uploadedFilesByPathKey = new Map();
+        folderSizeBytesByPathKey = new Map();
+
+        for (const item of uploadedFiles) {
+            const p = Array.isArray(item.path) ? item.path : [];
+            const pKey = makePathKey(p);
+            item._pathKey = pKey;
+
+            const bucket = uploadedFilesByPathKey.get(pKey);
+            if (bucket) bucket.push(item);
+            else uploadedFilesByPathKey.set(pKey, [item]);
+
+            if (item.type === 'file' && typeof item.rawSize === 'number' && item.rawSize > 0) {
+                for (let i = 0; i < p.length; i++) {
+                    const folderKey = makePathKey(p.slice(0, i + 1));
+                    folderSizeBytesByPathKey.set(folderKey, (folderSizeBytesByPathKey.get(folderKey) || 0) + item.rawSize);
+                }
+            }
+        }
+    }
+
+    function setCurrentPath(pathArray) {
+        currentPath = Array.isArray(pathArray) ? pathArray : [];
+        currentPathKey = makePathKey(currentPath);
+    }
 
     function handleListenerError(error) {
         console.error("Firestore listener error:", error);
@@ -435,6 +472,7 @@ document.addEventListener('DOMContentLoaded', function () {
             db.collection('posts').orderBy('id', 'desc').get()
         ]).then(([filesSnapshot, postsSnapshot]) => {
             uploadedFiles = filesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            rebuildFileCaches();
             blogPosts = postsSnapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
             if (typeof window.renderFiles === 'function') window.renderFiles();
             if (typeof window.renderBlogs === 'function') window.renderBlogs();
@@ -444,6 +482,7 @@ document.addEventListener('DOMContentLoaded', function () {
         db.collection('files').onSnapshot(
             (snapshot) => {
                 uploadedFiles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                rebuildFileCaches();
                 if (typeof window.renderFiles === 'function') window.renderFiles();
             },
             handleListenerError
@@ -798,19 +837,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- Rendering ---
     function calculateFolderSize(folder) {
-        const folderFullPath = [...folder.path, folder.name];
-        const children = uploadedFiles.filter(f => {
-            if (f.path.length < folderFullPath.length) return false;
-            for (let i = 0; i < folderFullPath.length; i++) {
-                if (f.path[i] !== folderFullPath[i]) return false;
-            }
-            return true;
-        });
-        let totalSize = 0;
-        children.forEach(f => {
-            if (f.type === 'file' && f.rawSize) totalSize += f.rawSize;
-        });
-        return formatFileSize(totalSize);
+        const p = Array.isArray(folder.path) ? folder.path : [];
+        const folderKey = makePathKey([...p, folder.name]);
+        const bytes = folderSizeBytesByPathKey.get(folderKey) || 0;
+        return formatFileSize(bytes);
     }
 
     window.renderFiles = function () {
@@ -822,7 +852,7 @@ document.addEventListener('DOMContentLoaded', function () {
         renderBreadcrumbs(breadcrumbs);
 
         // Filter items for current path
-        const items = uploadedFiles.filter(f => JSON.stringify(f.path) === JSON.stringify(currentPath));
+        const items = (uploadedFilesByPathKey.get(currentPathKey) || []).slice();
 
         // Sort: Folders first, then files
         items.sort((a, b) => {
@@ -878,17 +908,17 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- Navigation Actions ---
     window.navigateTo = function (folderName) {
-        currentPath.push(folderName);
+        setCurrentPath([...currentPath, folderName]);
         window.renderFiles();
     };
 
     window.navigateToRoot = function () {
-        currentPath = [];
+        setCurrentPath([]);
         window.renderFiles();
     };
 
     window.navigateUpTo = function (index) {
-        currentPath = currentPath.slice(0, index + 1);
+        setCurrentPath(currentPath.slice(0, index + 1));
         window.renderFiles();
     };
 
