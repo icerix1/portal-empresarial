@@ -677,8 +677,8 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     // --- Download ---
-    window.downloadFolder = function (id) {
-        const folder = uploadedFiles.find(f => f.id == id);
+    async function downloadFolder(folderId, folderName) {
+        const folder = uploadedFiles.find(f => f.id == folderId);
         if (!folder) return;
 
         const zip = new JSZip();
@@ -702,34 +702,24 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         let promises = [];
-        items.forEach(item => {
-            const relativePath = item.path.slice(folderFullPath.length);
-            const fileName = [...relativePath, item.name].join('/');
+        for (const file of items) {
+            try {
+                // Use the proxy function
+                const proxyUrl = `https://us-central1-compresor-de-archivos-15e3a.cloudfunctions.net/downloadProxy?filePath=${encodeURIComponent(file.path)}`;
 
-            if (item.url) {
-                promises.push(
-                    fetch(item.url, { mode: 'cors' })
-                        .then(res => {
-                            if (!res.ok) throw new Error(`Failed to fetch ${item.name}: ${res.status}`);
-                            return res.blob();
-                        })
-                        .then(blob => {
-                            zip.file(fileName, blob);
-                            console.log('Added to zip:', fileName);
-                        })
-                        .catch(err => {
-                            console.error("Could not download file for zip:", err);
-                            alert(`Error descargando ${item.name}: ${err.message}`);
-                        })
-                );
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error('Network response was not ok');
+
+                const blob = await response.blob();
+                zip.file(file.name, blob);
+            } catch (error) {
+                console.error('Could not download file for zip:', file.name, error);
             }
-        });
+        }
 
-        Promise.all(promises).then(() => {
-            zip.generateAsync({ type: "blob" }).then(function (content) {
-                saveAs(content, folder.name + ".zip");
-                console.log('ZIP generated and saved');
-            });
+        zip.generateAsync({ type: "blob" }).then(function (content) {
+            saveAs(content, folder.name + ".zip");
+            console.log('ZIP generated and saved');
         }).catch(err => {
             console.error('Error generating ZIP:', err);
             alert('Error generando el ZIP: ' + err.message);

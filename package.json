@@ -6,7 +6,15 @@
     "start": "npx serve .",
     "dev": "npx serve . -l 3000"
   },
-  "keywords": ["portal", "archivos", "blog"],
+  "keywords": [
+    "portal",
+    "archivos",
+    "blog"
+  ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "firebase-admin": "^13.6.0"
+  }
 }
