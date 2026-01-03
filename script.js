@@ -348,6 +348,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let blogPosts = [];
     let listenersStarted = false;
     let permissionAlertShown = false;
+    let activeUploadSession = null;
 
     function handleListenerError(error) {
         console.error("Firestore listener error:", error);
@@ -475,28 +476,150 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    function handleFiles(files) {
+    function ensureUploadOverlay() {
+        let overlay = document.getElementById('uploadOverlay');
+        if (overlay) return overlay;
+
+        overlay = document.createElement('div');
+        overlay.id = 'uploadOverlay';
+        overlay.className = 'zip-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zip-overlay-card">
+                <div class="zip-overlay-title">Subiendo…</div>
+                <div class="zip-overlay-sub" id="uploadOverlaySub">Preparando…</div>
+                <div class="zip-overlay-bar"><div class="zip-overlay-fill" id="uploadOverlayFill"></div></div>
+                <div class="zip-overlay-percent" id="uploadOverlayPercent">0%</div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    function setUploadOverlay(visible, percent, text) {
+        const overlay = ensureUploadOverlay();
+        const sub = overlay.querySelector('#uploadOverlaySub');
+        const fill = overlay.querySelector('#uploadOverlayFill');
+        const pct = overlay.querySelector('#uploadOverlayPercent');
+        if (visible) overlay.classList.remove('hidden');
+        else overlay.classList.add('hidden');
+        if (typeof percent === 'number') {
+            const clamped = Math.max(0, Math.min(100, percent));
+            if (fill) fill.style.width = clamped + '%';
+            if (pct) pct.textContent = Math.round(clamped) + '%';
+        }
+        if (sub && typeof text === 'string') sub.textContent = text;
+    }
+
+    function getUploadUniqueId() {
+        try {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+        } catch (e) { }
+        return Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+    }
+
+    function sanitizeStorageSegment(seg) {
+        return String(seg || '').replace(/[\\/]/g, '_');
+    }
+
+    function buildUploadStoragePath(pathArray, fileName) {
+        const safeParts = (pathArray || []).map(sanitizeStorageSegment).filter(Boolean);
+        const safeName = sanitizeStorageSegment(fileName);
+        const unique = getUploadUniqueId();
+        const dir = safeParts.length ? safeParts.join('/') + '/' : '';
+        return `uploads/${dir}${unique}_${safeName}`;
+    }
+
+    async function handleFiles(files) {
         const auth = firebase.auth && firebase.auth();
         if (!auth || !auth.currentUser) {
             console.error('❌ No hay usuario autenticado todavía. Espera 2 segundos y reintenta.');
             alert('Esperá un momento: Firebase todavía está autenticando. Reintentá en 2 segundos.');
             return;
         }
-        for (let file of files) {
-            let path = [...currentPath];
-            if (file.webkitRelativePath) {
-                const parts = file.webkitRelativePath.split('/');
-                parts.pop();
-                if (parts.length > 0) {
-                    path = [...currentPath, ...parts];
-                    let tempPath = [...currentPath];
-                    for (let part of parts) {
-                        tempPath.push(part);
-                        ensureFolderExists(tempPath);
+
+        const list = Array.from(files || []);
+        if (!list.length) return;
+
+        activeUploadSession = {
+            startedAt: Date.now(),
+            totalFiles: list.length,
+            totalBytes: list.reduce((acc, f) => acc + (f && f.size ? f.size : 0), 0),
+            completed: 0,
+            failed: 0,
+            okBytes: 0,
+            failedItems: []
+        };
+
+        const session = activeUploadSession;
+        setUploadOverlay(true, 0, `0/${session.totalFiles} - ${formatFileSize(0)}/${formatFileSize(session.totalBytes)}`);
+
+        let cursor = 0;
+        const concurrency = Math.min(3, session.totalFiles);
+
+        const worker = async () => {
+            while (cursor < list.length) {
+                const idx = cursor;
+                cursor += 1;
+                const file = list[idx];
+
+                let path = [...currentPath];
+                if (file && file.webkitRelativePath) {
+                    const parts = file.webkitRelativePath.split('/');
+                    parts.pop();
+                    if (parts.length > 0) {
+                        path = [...currentPath, ...parts];
+                        let tempPath = [...currentPath];
+                        for (let part of parts) {
+                            tempPath.push(part);
+                            ensureFolderExists(tempPath);
+                        }
                     }
                 }
+
+                let ok = false;
+                let errMsg = '';
+                try {
+                    const result = await uploadFileToFirebase(file, path);
+                    ok = !!(result && result.ok);
+                    if (!ok && result && result.error) errMsg = String(result.error && result.error.message ? result.error.message : result.error);
+                } catch (e) {
+                    ok = false;
+                    errMsg = String(e && e.message ? e.message : e);
+                }
+
+                session.completed += 1;
+                if (ok) session.okBytes += (file && file.size ? file.size : 0);
+                else {
+                    session.failed += 1;
+                    session.failedItems.push({
+                        name: file && file.name ? file.name : '(sin nombre)',
+                        size: file && file.size ? file.size : 0,
+                        error: errMsg
+                    });
+                }
+
+                const pct = (session.completed / session.totalFiles) * 100;
+                const statusText = `${session.completed}/${session.totalFiles}${session.failed ? ` (fallidos: ${session.failed})` : ''} - ${formatFileSize(session.okBytes)}/${formatFileSize(session.totalBytes)}`;
+                setUploadOverlay(true, pct, statusText);
+                await new Promise(r => setTimeout(r, 0));
             }
-            uploadFileToFirebase(file, path);
+        };
+
+        try {
+            await Promise.all(Array.from({ length: concurrency }, () => worker()));
+        } finally {
+            setUploadOverlay(false, 100, '');
+        }
+
+        if (session.failed || session.okBytes !== session.totalBytes) {
+            const sample = session.failedItems.slice(0, 10).map(f => `- ${f.name} (${formatFileSize(f.size)})${f.error ? `: ${f.error}` : ''}`).join('\n');
+            alert(
+                `Subida terminada con problemas.\n` +
+                `Archivos: ${session.completed}/${session.totalFiles}\n` +
+                `Fallidos: ${session.failed}\n` +
+                `Bytes OK: ${formatFileSize(session.okBytes)} / ${formatFileSize(session.totalBytes)}\n\n` +
+                (sample ? `Ejemplos de fallidos:\n${sample}` : '')
+            );
         }
     }
 
@@ -526,60 +649,72 @@ document.addEventListener('DOMContentLoaded', function () {
         const auth = firebase.auth && firebase.auth();
         if (!auth || !auth.currentUser) {
             console.error(`❌ No hay usuario autenticado todavía. No se puede subir ${file.name}.`);
-            return;
+            return Promise.resolve({ ok: false, stage: 'auth', error: new Error('No authenticated user') });
         }
-        const filesContainer = document.getElementById('filesContainer');
-        const progressRow = document.createElement('tr');
-        progressRow.className = 'upload-progress-row';
-        progressRow.innerHTML = `
-            <td colspan="4">
-                <div class="upload-progress">
-                    <span>⬆️ ${escapeHtml(file.name)}</span>
-                    <div class="progress-bar"><div class="progress-fill"></div></div>
-                    <span class="progress-percent">0%</span>
-                </div>
-            </td>
-        `;
-        if (filesContainer) filesContainer.appendChild(progressRow);
+        return new Promise((resolve) => {
+            const filesContainer = document.getElementById('filesContainer');
+            const progressRow = document.createElement('tr');
+            progressRow.className = 'upload-progress-row';
+            progressRow.innerHTML = `
+                <td colspan="4">
+                    <div class="upload-progress">
+                        <span>⬆️ ${escapeHtml(file.name)}</span>
+                        <div class="progress-bar"><div class="progress-fill"></div></div>
+                        <span class="progress-percent">0%</span>
+                    </div>
+                </td>
+            `;
+            if (filesContainer) filesContainer.appendChild(progressRow);
 
-        const storageRef = storage.ref();
-        const fileRef = storageRef.child(`uploads/${Date.now()}_${file.name}`);
-        const uploadTask = fileRef.put(file);
+            const storageRef = storage.ref();
+            const objectPath = buildUploadStoragePath(pathArray, file.name);
+            const fileRef = storageRef.child(objectPath);
+            const uploadTask = fileRef.put(file);
 
-        uploadTask.on(
-            'state_changed',
-            (snap) => {
-                const progress = (snap.bytesTransferred / snap.totalBytes) * 100;
-                const progressFill = progressRow.querySelector('.progress-fill');
-                const progressPercent = progressRow.querySelector('.progress-percent');
-                if (progressFill) progressFill.style.width = progress + '%';
-                if (progressPercent) progressPercent.textContent = Math.round(progress) + '%';
-            },
-            (error) => {
-                console.error(`❌ Error uploading ${file.name}:`, error);
-                try { progressRow.remove(); } catch (e) { }
-            },
-            () => {
-                uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
-                    db.collection('files').add({
-                        type: 'file',
-                        name: file.name,
-                        size: formatFileSize(file.size),
-                        rawSize: file.size,
-                        path: pathArray,
-                        date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-                        url: downloadURL,
-                        storagePath: uploadTask.snapshot.ref.fullPath,
-                        bucket: (firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : undefined
+            uploadTask.on(
+                'state_changed',
+                (snap) => {
+                    const progress = (snap.bytesTransferred / snap.totalBytes) * 100;
+                    const progressFill = progressRow.querySelector('.progress-fill');
+                    const progressPercent = progressRow.querySelector('.progress-percent');
+                    if (progressFill) progressFill.style.width = progress + '%';
+                    if (progressPercent) progressPercent.textContent = Math.round(progress) + '%';
+                },
+                (error) => {
+                    console.error(`❌ Error uploading ${file.name}:`, error);
+                    try { progressRow.remove(); } catch (e) { }
+                    resolve({ ok: false, stage: 'upload', error });
+                },
+                () => {
+                    uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
+                        db.collection('files').add({
+                            type: 'file',
+                            name: file.name,
+                            size: formatFileSize(file.size),
+                            rawSize: file.size,
+                            path: pathArray,
+                            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+                            url: downloadURL,
+                            storagePath: uploadTask.snapshot.ref.fullPath,
+                            bucket: (firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : undefined,
+                            relativePath: file.webkitRelativePath || undefined
+                        }).then(() => {
+                            console.log(`✅ Uploaded: ${file.name}`);
+                            try { progressRow.remove(); } catch (e) { }
+                            resolve({ ok: true });
+                        }).catch((error) => {
+                            console.error(`❌ Error saving metadata for ${file.name}:`, error);
+                            try { progressRow.remove(); } catch (e) { }
+                            resolve({ ok: false, stage: 'firestore', error });
+                        });
+                    }).catch((error) => {
+                        console.error(`❌ Error getting download URL for ${file.name}:`, error);
+                        try { progressRow.remove(); } catch (e) { }
+                        resolve({ ok: false, stage: 'downloadURL', error });
                     });
-                    console.log(`✅ Uploaded: ${file.name}`);
-                    try { progressRow.remove(); } catch (e) { }
-                }).catch(err => {
-                    console.error(`❌ Error getting download URL for ${file.name}:`, err);
-                    try { progressRow.remove(); } catch (e) { }
-                });
-            }
-        );
+                }
+            );
+        });
     }
 
     // --- Rendering ---
