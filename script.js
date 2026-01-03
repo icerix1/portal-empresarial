@@ -569,7 +569,8 @@ document.addEventListener('DOMContentLoaded', function () {
                         path: pathArray,
                         date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
                         url: downloadURL,
-                        storagePath: uploadTask.snapshot.ref.fullPath
+                        storagePath: uploadTask.snapshot.ref.fullPath,
+                        bucket: (firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : undefined
                     });
                     console.log(`✅ Uploaded: ${file.name}`);
                     try { progressRow.remove(); } catch (e) { }
@@ -678,6 +679,17 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     // --- Download ---
+    function getBucketFromDownloadUrl(url) {
+        if (!url || typeof url !== 'string') return null;
+        const match = url.match(/\/b\/([^/]+)\/o\//);
+        if (!match || !match[1]) return null;
+        try {
+            return decodeURIComponent(match[1]);
+        } catch (e) {
+            return null;
+        }
+    }
+
     function getStoragePathFromDownloadUrl(url) {
         if (!url || typeof url !== 'string') return null;
         const match = url.match(/\/o\/([^?]+)/);
@@ -718,7 +730,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 const storagePath = file.storagePath || getStoragePathFromDownloadUrl(file.url);
                 if (!storagePath) throw new Error('Missing storagePath for download');
 
-                const proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?filePath=${encodeURIComponent(storagePath)}`;
+                const bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
+                if (!bucketName) throw new Error('Missing bucket for download');
+
+                const proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
 
                 const response = await fetch(proxyUrl, { mode: 'cors' });
                 if (!response.ok) throw new Error('Network response was not ok');

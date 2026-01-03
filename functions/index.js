@@ -4,7 +4,7 @@ const admin = require("firebase-admin");
 admin.initializeApp();
 
 const storage = admin.storage();
-const bucket = storage.bucket("compresor-de-archivos-15e3a.appspot.com");
+const defaultBucket = storage.bucket();
 
 exports.downloadProxy = functions.https.onRequest(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -17,6 +17,7 @@ exports.downloadProxy = functions.https.onRequest(async (req, res) => {
   }
 
   try {
+    const rawBucket = req.query && req.query.bucket;
     const raw = req.query && req.query.filePath;
     const filePath = typeof raw === "string" ? decodeURIComponent(raw) : "";
     if (!filePath) {
@@ -24,7 +25,10 @@ exports.downloadProxy = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const file = bucket.file(filePath);
+    const bucketName = typeof rawBucket === "string" ? decodeURIComponent(rawBucket) : "";
+    const bucketToUse = bucketName ? storage.bucket(bucketName) : defaultBucket;
+
+    const file = bucketToUse.file(filePath);
     const readStream = file.createReadStream();
 
     readStream.on("error", (error) => {
