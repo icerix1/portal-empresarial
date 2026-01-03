@@ -701,6 +701,40 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    function ensureZipOverlay() {
+        let overlay = document.getElementById('zipDownloadOverlay');
+        if (overlay) return overlay;
+
+        overlay = document.createElement('div');
+        overlay.id = 'zipDownloadOverlay';
+        overlay.className = 'zip-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zip-overlay-card">
+                <div class="zip-overlay-title">Descargando carpeta…</div>
+                <div class="zip-overlay-sub" id="zipOverlaySub">Preparando…</div>
+                <div class="zip-overlay-bar"><div class="zip-overlay-fill" id="zipOverlayFill"></div></div>
+                <div class="zip-overlay-percent" id="zipOverlayPercent">0%</div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    function setZipOverlay(visible, percent, text) {
+        const overlay = ensureZipOverlay();
+        const sub = overlay.querySelector('#zipOverlaySub');
+        const fill = overlay.querySelector('#zipOverlayFill');
+        const pct = overlay.querySelector('#zipOverlayPercent');
+        if (visible) overlay.classList.remove('hidden');
+        else overlay.classList.add('hidden');
+        if (typeof percent === 'number') {
+            const clamped = Math.max(0, Math.min(100, percent));
+            if (fill) fill.style.width = clamped + '%';
+            if (pct) pct.textContent = Math.round(clamped) + '%';
+        }
+        if (sub && typeof text === 'string') sub.textContent = text;
+    }
+
     window.downloadFolder = async function (folderId, folderName) {
         const folder = uploadedFiles.find(f => f.id == folderId);
         if (!folder) return;
@@ -725,44 +759,78 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        for (const file of items) {
-            let storagePath = null;
-            let bucketName = null;
-            let proxyUrl = null;
-            try {
-                storagePath = file.storagePath || getStoragePathFromDownloadUrl(file.url);
-                if (!storagePath) throw new Error('Missing storagePath for download');
+        const totalFiles = items.length;
+        let completedFiles = 0;
+        let failedFiles = 0;
+        setZipOverlay(true, 0, `0/${totalFiles}`);
 
-                bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
-                if (!bucketName) throw new Error('Missing bucket for download');
+        let cursor = 0;
+        const concurrency = Math.min(4, totalFiles);
 
-                proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+        const worker = async () => {
+            while (cursor < items.length) {
+                const idx = cursor;
+                cursor += 1;
+                const file = items[idx];
 
-                const response = await fetch(proxyUrl, { mode: 'cors' });
-                if (!response.ok) throw new Error(`Proxy request failed (${response.status})`);
+                let storagePath = null;
+                let bucketName = null;
+                let proxyUrl = null;
+                try {
+                    storagePath = file.storagePath || getStoragePathFromDownloadUrl(file.url);
+                    if (!storagePath) throw new Error('Missing storagePath for download');
 
-                const blob = await response.blob();
-                const relativeParts = (file.path || []).slice(folderFullPath.length);
-                const zipPath = [...relativeParts, file.name].join('/');
-                zip.file(zipPath, blob);
-            } catch (error) {
-                console.error('Could not download file for zip:', {
-                    name: file.name,
-                    url: file.url,
-                    storagePath,
-                    bucketName,
-                    proxyUrl
-                }, error);
+                    bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
+                    if (!bucketName) throw new Error('Missing bucket for download');
+
+                    proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 120000);
+                    const response = await fetch(proxyUrl, { mode: 'cors', signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    if (!response.ok) throw new Error(`Proxy request failed (${response.status})`);
+
+                    const blob = await response.blob();
+                    const relativeParts = (file.path || []).slice(folderFullPath.length);
+                    const zipPath = [...relativeParts, file.name].join('/');
+                    zip.file(zipPath, blob, { binary: true });
+                } catch (error) {
+                    failedFiles += 1;
+                    console.error('Could not download file for zip:', {
+                        name: file.name,
+                        url: file.url,
+                        storagePath,
+                        bucketName,
+                        proxyUrl
+                    }, error);
+                } finally {
+                    completedFiles += 1;
+                    const downloadPct = (completedFiles / totalFiles) * 80;
+                    setZipOverlay(true, downloadPct, `${completedFiles}/${totalFiles}${failedFiles ? ` (fallidos: ${failedFiles})` : ''}`);
+                    await new Promise(r => setTimeout(r, 0));
+                }
             }
-        }
+        };
 
-        zip.generateAsync({ type: "blob" }).then(function (content) {
+        try {
+            await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+            const content = await zip.generateAsync({ type: "blob", compression: "STORE", streamFiles: true }, (meta) => {
+                if (meta && typeof meta.percent === 'number') {
+                    const pct = 80 + (meta.percent * 0.2);
+                    setZipOverlay(true, pct, `Creando ZIP… ${Math.round(meta.percent)}%`);
+                }
+            });
+
             saveAs(content, folder.name + ".zip");
+            setZipOverlay(false, 100, '');
             console.log('ZIP generated and saved');
-        }).catch(err => {
+        } catch (err) {
+            setZipOverlay(false, 0, '');
             console.error('Error generating ZIP:', err);
             alert('Error generando el ZIP: ' + err.message);
-        });
+        }
     };
 
     // --- Admin Actions ---

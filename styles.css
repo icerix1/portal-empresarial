@@ -78,6 +78,56 @@ body {
     padding: 20px;
 }
 
+.zip-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.zip-overlay-card {
+    background: var(--white);
+    width: min(420px, 90vw);
+    padding: 18px 20px;
+    border-radius: 12px;
+    box-shadow: var(--shadow-md);
+    text-align: center;
+}
+
+.zip-overlay-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.zip-overlay-sub {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+.zip-overlay-bar {
+    height: 8px;
+    background: var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.zip-overlay-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--primary);
+    transition: width 0.2s ease;
+}
+
+.zip-overlay-percent {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
 /* ========================================
    Header
    ======================================== */
