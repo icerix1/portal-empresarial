@@ -41,7 +41,8 @@ const translations = {
         selectFolder: 'Subir Carpeta',
         deleteAll: 'Eliminar Todo',
         deleteAllConfirm: '¿Estás seguro de que quieres eliminar TODOS los archivos? Esta acción no se puede deshacer.',
-        download: 'Descargar'
+        download: 'Descargar',
+        donatePaypal: 'Donaciones por PayPal'
     },
     en: {
         portal: 'Business Portal',
@@ -82,9 +83,12 @@ const translations = {
         selectFolder: 'Upload Folder',
         deleteAll: 'Delete All',
         deleteAllConfirm: 'Are you sure you want to delete ALL files? This action cannot be undone.',
-        download: 'Download'
+        download: 'Download',
+        donatePaypal: 'Donate via PayPal'
     }
 };
+
+const PAYPAL_DONATION_URL = 'https://paypal.me/icerix1';
 
 let currentLang = localStorage.getItem('lang') || 'es';
 
@@ -158,6 +162,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const langBtn = document.getElementById('langToggle');
     if (langBtn) langBtn.addEventListener('click', toggleLanguage);
     updateLanguage();
+
+    document.querySelectorAll('[data-paypal-donate]').forEach((el) => {
+        el.setAttribute('href', PAYPAL_DONATION_URL);
+    });
 
     // ========================================
     // Triple-click en logo para setup admin
