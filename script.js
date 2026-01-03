@@ -701,7 +701,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    async function downloadFolder(folderId, folderName) {
+    window.downloadFolder = async function (folderId, folderName) {
         const folder = uploadedFiles.find(f => f.id == folderId);
         if (!folder) return;
 
@@ -726,24 +726,33 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         for (const file of items) {
+            let storagePath = null;
+            let bucketName = null;
+            let proxyUrl = null;
             try {
-                const storagePath = file.storagePath || getStoragePathFromDownloadUrl(file.url);
+                storagePath = file.storagePath || getStoragePathFromDownloadUrl(file.url);
                 if (!storagePath) throw new Error('Missing storagePath for download');
 
-                const bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
+                bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
                 if (!bucketName) throw new Error('Missing bucket for download');
 
-                const proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+                proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
 
                 const response = await fetch(proxyUrl, { mode: 'cors' });
-                if (!response.ok) throw new Error('Network response was not ok');
-                
+                if (!response.ok) throw new Error(`Proxy request failed (${response.status})`);
+
                 const blob = await response.blob();
                 const relativeParts = (file.path || []).slice(folderFullPath.length);
                 const zipPath = [...relativeParts, file.name].join('/');
                 zip.file(zipPath, blob);
             } catch (error) {
-                console.error('Could not download file for zip:', file.name, error);
+                console.error('Could not download file for zip:', {
+                    name: file.name,
+                    url: file.url,
+                    storagePath,
+                    bucketName,
+                    proxyUrl
+                }, error);
             }
         }
 
