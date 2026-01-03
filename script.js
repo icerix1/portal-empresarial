@@ -568,7 +568,8 @@ document.addEventListener('DOMContentLoaded', function () {
                         rawSize: file.size,
                         path: pathArray,
                         date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-                        url: downloadURL
+                        url: downloadURL,
+                        storagePath: uploadTask.snapshot.ref.fullPath
                     });
                     console.log(`✅ Uploaded: ${file.name}`);
                     try { progressRow.remove(); } catch (e) { }
@@ -677,6 +678,17 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     // --- Download ---
+    function getStoragePathFromDownloadUrl(url) {
+        if (!url || typeof url !== 'string') return null;
+        const match = url.match(/\/o\/([^?]+)/);
+        if (!match || !match[1]) return null;
+        try {
+            return decodeURIComponent(match[1]);
+        } catch (e) {
+            return null;
+        }
+    }
+
     async function downloadFolder(folderId, folderName) {
         const folder = uploadedFiles.find(f => f.id == folderId);
         if (!folder) return;
@@ -703,14 +715,18 @@ document.addEventListener('DOMContentLoaded', function () {
 
         for (const file of items) {
             try {
-                // Usar el proxy actualizado
-                const proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?filePath=${encodeURIComponent(file.path)}`;
-                
-                const response = await fetch(proxyUrl);
+                const storagePath = file.storagePath || getStoragePathFromDownloadUrl(file.url);
+                if (!storagePath) throw new Error('Missing storagePath for download');
+
+                const proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?filePath=${encodeURIComponent(storagePath)}`;
+
+                const response = await fetch(proxyUrl, { mode: 'cors' });
                 if (!response.ok) throw new Error('Network response was not ok');
                 
                 const blob = await response.blob();
-                zip.file(file.name, blob);
+                const relativeParts = (file.path || []).slice(folderFullPath.length);
+                const zipPath = [...relativeParts, file.name].join('/');
+                zip.file(zipPath, blob);
             } catch (error) {
                 console.error('Could not download file for zip:', file.name, error);
             }
