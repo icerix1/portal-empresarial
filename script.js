@@ -687,26 +687,40 @@ document.addEventListener('DOMContentLoaded', function () {
                 },
                 () => {
                     uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
-                        db.collection('files').add({
-                            type: 'file',
-                            name: file.name,
-                            size: formatFileSize(file.size),
-                            rawSize: file.size,
-                            path: pathArray,
-                            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-                            url: downloadURL,
-                            storagePath: uploadTask.snapshot.ref.fullPath,
-                            bucket: (firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : undefined,
-                            relativePath: file.webkitRelativePath || undefined
-                        }).then(() => {
-                            console.log(`✅ Uploaded: ${file.name}`);
-                            try { progressRow.remove(); } catch (e) { }
-                            resolve({ ok: true });
-                        }).catch((error) => {
-                            console.error(`❌ Error saving metadata for ${file.name}:`, error);
+                        try {
+                            const metadata = {
+                                type: 'file',
+                                name: file.name,
+                                size: formatFileSize(file.size),
+                                rawSize: file.size,
+                                path: pathArray,
+                                date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+                                url: downloadURL,
+                                storagePath: uploadTask.snapshot.ref.fullPath
+                            };
+
+                            const bucketName = (firebase.app && firebase.app().options && firebase.app().options.storageBucket)
+                                ? firebase.app().options.storageBucket
+                                : null;
+                            if (bucketName) metadata.bucket = bucketName;
+
+                            const rel = file && file.webkitRelativePath ? String(file.webkitRelativePath) : '';
+                            if (rel) metadata.relativePath = rel;
+
+                            db.collection('files').add(metadata).then(() => {
+                                console.log(`✅ Uploaded: ${file.name}`);
+                                try { progressRow.remove(); } catch (e) { }
+                                resolve({ ok: true });
+                            }).catch((error) => {
+                                console.error(`❌ Error saving metadata for ${file.name}:`, error);
+                                try { progressRow.remove(); } catch (e) { }
+                                resolve({ ok: false, stage: 'firestore', error });
+                            });
+                        } catch (error) {
+                            console.error(`❌ Error building metadata for ${file.name}:`, error);
                             try { progressRow.remove(); } catch (e) { }
                             resolve({ ok: false, stage: 'firestore', error });
-                        });
+                        }
                     }).catch((error) => {
                         console.error(`❌ Error getting download URL for ${file.name}:`, error);
                         try { progressRow.remove(); } catch (e) { }
