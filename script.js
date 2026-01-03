@@ -179,8 +179,69 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    function setupAdminLocation() {
-        const password = prompt('Código de configuración:');
+    function ensureAdminSetupOverlay() {
+        let overlay = document.getElementById('adminSetupOverlay');
+        if (overlay) return overlay;
+
+        overlay = document.createElement('div');
+        overlay.id = 'adminSetupOverlay';
+        overlay.className = 'zip-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zip-overlay-card">
+                <div class="zip-overlay-title">Código de configuración</div>
+                <div class="zip-overlay-sub">Ingresá el código para guardar esta ubicación como admin.</div>
+                <div style="margin: 12px 0;">
+                    <input id="adminSetupCodeInput" type="password" class="form-control" placeholder="Código" autocomplete="one-time-code">
+                </div>
+                <div style="display:flex; gap:10px; justify-content:center;">
+                    <button class="btn btn-outline" id="adminSetupCancelBtn" type="button">Cancelar</button>
+                    <button class="btn btn-primary" id="adminSetupOkBtn" type="button">Confirmar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    function requestAdminSetupCode() {
+        return new Promise((resolve) => {
+            const overlay = ensureAdminSetupOverlay();
+            const input = overlay.querySelector('#adminSetupCodeInput');
+            const okBtn = overlay.querySelector('#adminSetupOkBtn');
+            const cancelBtn = overlay.querySelector('#adminSetupCancelBtn');
+
+            const cleanup = () => {
+                if (okBtn) okBtn.onclick = null;
+                if (cancelBtn) cancelBtn.onclick = null;
+                if (input) input.onkeydown = null;
+            };
+
+            const close = (value) => {
+                cleanup();
+                overlay.classList.add('hidden');
+                resolve(value);
+            };
+
+            overlay.classList.remove('hidden');
+            if (input) {
+                input.value = '';
+                input.focus();
+            }
+
+            if (okBtn) okBtn.onclick = () => close(input ? input.value : '');
+            if (cancelBtn) cancelBtn.onclick = () => close(null);
+            if (input) {
+                input.onkeydown = (e) => {
+                    if (e.key === 'Enter') close(input.value);
+                    if (e.key === 'Escape') close(null);
+                };
+            }
+        });
+    }
+
+    async function setupAdminLocation() {
+        const password = await requestAdminSetupCode();
+        if (password == null) return;
         if (password !== 'setup2026') {
             alert('Código incorrecto');
             return;
@@ -435,6 +496,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- File Processing ---
     function processItems(items) {
+        if (!isAdmin) return;
         let entryPromises = [];
         for (let i = 0; i < items.length; i++) {
             let item = items[i];
@@ -530,6 +592,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function handleFiles(files) {
+        if (!isAdmin) return;
         const auth = firebase.auth && firebase.auth();
         if (!auth || !auth.currentUser) {
             console.error('❌ No hay usuario autenticado todavía. Espera 2 segundos y reintenta.');
@@ -624,6 +687,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function ensureFolderExists(pathArray) {
+        if (!isAdmin) return;
         const parentPath = pathArray.slice(0, -1);
         const folderName = pathArray[pathArray.length - 1];
 
@@ -646,6 +710,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function uploadFileToFirebase(file, pathArray) {
+        if (!isAdmin) return Promise.resolve({ ok: false, stage: 'admin', error: new Error('Not admin') });
         const auth = firebase.auth && firebase.auth();
         if (!auth || !auth.currentUser) {
             console.error(`❌ No hay usuario autenticado todavía. No se puede subir ${file.name}.`);
