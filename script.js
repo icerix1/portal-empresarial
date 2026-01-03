@@ -407,13 +407,15 @@ document.addEventListener('DOMContentLoaded', function () {
     // State
     let currentPath = [];
     let currentPathKey = '';
-    let uploadedFiles = [];
-    let uploadedFilesByPathKey = new Map();
-    let folderSizeBytesByPathKey = new Map();
+    let currentFolderItems = [];
+    let folderSizeBytesByFullPathKey = new Map();
+    let folderSizeInFlightByFullPathKey = new Map();
     let blogPosts = [];
     let listenersStarted = false;
     let permissionAlertShown = false;
     let activeUploadSession = null;
+    let filesUnsubscribe = null;
+    let renderFilesQueued = false;
 
     function makePathKey(pathArray) {
         const arr = Array.isArray(pathArray) ? pathArray : [];
@@ -421,31 +423,64 @@ document.addEventListener('DOMContentLoaded', function () {
         return arr.map(v => String(v)).join('\u0001');
     }
 
-    function rebuildFileCaches() {
-        uploadedFilesByPathKey = new Map();
-        folderSizeBytesByPathKey = new Map();
-
-        for (const item of uploadedFiles) {
-            const p = Array.isArray(item.path) ? item.path : [];
-            const pKey = makePathKey(p);
-            item._pathKey = pKey;
-
-            const bucket = uploadedFilesByPathKey.get(pKey);
-            if (bucket) bucket.push(item);
-            else uploadedFilesByPathKey.set(pKey, [item]);
-
-            if (item.type === 'file' && typeof item.rawSize === 'number' && item.rawSize > 0) {
-                for (let i = 0; i < p.length; i++) {
-                    const folderKey = makePathKey(p.slice(0, i + 1));
-                    folderSizeBytesByPathKey.set(folderKey, (folderSizeBytesByPathKey.get(folderKey) || 0) + item.rawSize);
-                }
-            }
-        }
-    }
-
     function setCurrentPath(pathArray) {
         currentPath = Array.isArray(pathArray) ? pathArray : [];
         currentPathKey = makePathKey(currentPath);
+        currentFolderItems = [];
+        if (listenersStarted) subscribeFilesForCurrentPath();
+    }
+
+    function queueRenderFiles() {
+        if (renderFilesQueued) return;
+        renderFilesQueued = true;
+        requestAnimationFrame(() => {
+            renderFilesQueued = false;
+            if (typeof window.renderFiles === 'function') window.renderFiles();
+        });
+    }
+
+    async function computeFolderSizeBytes(folderFullPathArray) {
+        if (!db) return 0;
+        const queue = [folderFullPathArray];
+        const visited = new Set();
+        let total = 0;
+
+        while (queue.length) {
+            const p = queue.shift();
+            const key = makePathKey(p);
+            if (visited.has(key)) continue;
+            visited.add(key);
+
+            const snap = await db.collection('files').where('path', '==', p).get();
+            snap.forEach((doc) => {
+                const data = doc.data() || {};
+                if (data.type === 'file') {
+                    if (typeof data.rawSize === 'number' && data.rawSize > 0) total += data.rawSize;
+                } else if (data.type === 'folder' && data.name) {
+                    queue.push([...p, data.name]);
+                }
+            });
+        }
+        return total;
+    }
+
+    function subscribeFilesForCurrentPath() {
+        if (!db) return;
+        if (typeof filesUnsubscribe === 'function') {
+            try { filesUnsubscribe(); } catch (e) { }
+        }
+
+        const filesContainer = document.getElementById('filesContainer');
+        if (filesContainer) filesContainer.innerHTML = '<tr class="loading-row"><td colspan="4">🔄 Cargando archivos...</td></tr>';
+
+        const pathValue = currentPath.slice();
+        filesUnsubscribe = db.collection('files').where('path', '==', pathValue).onSnapshot(
+            (snapshot) => {
+                currentFolderItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                queueRenderFiles();
+            },
+            handleListenerError
+        );
     }
 
     function handleListenerError(error) {
@@ -461,32 +496,16 @@ document.addEventListener('DOMContentLoaded', function () {
         listenersStarted = true;
 
         // Mostrar indicadores de carga
-        const filesContainer = document.getElementById('filesContainer');
         const blogsContainer = document.getElementById('blogsContainer');
-        if (filesContainer) filesContainer.innerHTML = '<tr class="loading-row"><td colspan="4">🔄 Cargando archivos...</td></tr>';
         if (blogsContainer) blogsContainer.innerHTML = '<p class="loading-message">🔄 Cargando publicaciones...</p>';
 
-        // Carga inicial rápida con get()
-        Promise.all([
-            db.collection('files').get(),
-            db.collection('posts').orderBy('id', 'desc').get()
-        ]).then(([filesSnapshot, postsSnapshot]) => {
-            uploadedFiles = filesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            rebuildFileCaches();
+        if (!currentPathKey) setCurrentPath([]);
+        subscribeFilesForCurrentPath();
+
+        db.collection('posts').orderBy('id', 'desc').get().then((postsSnapshot) => {
             blogPosts = postsSnapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
-            if (typeof window.renderFiles === 'function') window.renderFiles();
             if (typeof window.renderBlogs === 'function') window.renderBlogs();
         }).catch(handleListenerError);
-
-        // Activar listeners para actualizaciones en tiempo real
-        db.collection('files').onSnapshot(
-            (snapshot) => {
-                uploadedFiles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                rebuildFileCaches();
-                if (typeof window.renderFiles === 'function') window.renderFiles();
-            },
-            handleListenerError
-        );
 
         db.collection('posts').orderBy('id', 'desc').onSnapshot(
             (snapshot) => {
@@ -729,23 +748,29 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!isAdmin) return;
         const parentPath = pathArray.slice(0, -1);
         const folderName = pathArray[pathArray.length - 1];
+        const encodeId = (input) => {
+            try {
+                return btoa(unescape(encodeURIComponent(String(input))))
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/g, '');
+            } catch (e) {
+                return Date.now().toString(36);
+            }
+        };
 
-        const exists = uploadedFiles.some(f =>
-            f.type === 'folder' &&
-            f.name === folderName &&
-            JSON.stringify(f.path) === JSON.stringify(parentPath)
-        );
+        const fullPathKey = makePathKey(pathArray);
+        const folderDocId = `folder_${encodeId(fullPathKey)}`;
 
-        if (!exists) {
-            db.collection('files').add({
-                type: 'folder',
-                name: folderName,
-                size: '-',
-                date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
-                path: parentPath,
-                parentId: 'virtual' // For simpler queries later if needed
-            });
-        }
+        db.collection('files').doc(folderDocId).set({
+            type: 'folder',
+            name: folderName,
+            size: '-',
+            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+            path: parentPath,
+            pathKey: makePathKey(parentPath),
+            parentId: 'virtual'
+        }, { merge: true });
     }
 
     function uploadFileToFirebase(file, pathArray) {
@@ -798,6 +823,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 size: formatFileSize(file.size),
                                 rawSize: file.size,
                                 path: pathArray,
+                                pathKey: makePathKey(pathArray),
                                 date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
                                 url: downloadURL,
                                 storagePath: uploadTask.snapshot.ref.fullPath
@@ -838,9 +864,25 @@ document.addEventListener('DOMContentLoaded', function () {
     // --- Rendering ---
     function calculateFolderSize(folder) {
         const p = Array.isArray(folder.path) ? folder.path : [];
-        const folderKey = makePathKey([...p, folder.name]);
-        const bytes = folderSizeBytesByPathKey.get(folderKey) || 0;
-        return formatFileSize(bytes);
+        const folderFullPath = [...p, folder.name];
+        const folderKey = makePathKey(folderFullPath);
+        if (folderSizeBytesByFullPathKey.has(folderKey)) {
+            return formatFileSize(folderSizeBytesByFullPathKey.get(folderKey) || 0);
+        }
+
+        if (!folderSizeInFlightByFullPathKey.has(folderKey)) {
+            const promise = computeFolderSizeBytes(folderFullPath).then((bytes) => {
+                folderSizeBytesByFullPathKey.set(folderKey, bytes);
+                folderSizeInFlightByFullPathKey.delete(folderKey);
+                queueRenderFiles();
+                return bytes;
+            }).catch(() => {
+                folderSizeInFlightByFullPathKey.delete(folderKey);
+            });
+            folderSizeInFlightByFullPathKey.set(folderKey, promise);
+        }
+
+        return '…';
     }
 
     window.renderFiles = function () {
@@ -852,7 +894,7 @@ document.addEventListener('DOMContentLoaded', function () {
         renderBreadcrumbs(breadcrumbs);
 
         // Filter items for current path
-        const items = (uploadedFilesByPathKey.get(currentPathKey) || []).slice();
+        const items = currentFolderItems.slice();
 
         // Sort: Folders first, then files
         items.sort((a, b) => {
@@ -980,21 +1022,32 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     window.downloadFolder = async function (folderId, folderName) {
-        const folder = uploadedFiles.find(f => f.id == folderId);
-        if (!folder) return;
+        if (!db) return;
+        const folderSnap = await db.collection('files').doc(folderId).get();
+        if (!folderSnap.exists) return;
+        const folder = { id: folderSnap.id, ...folderSnap.data() };
+        if (!folder || folder.type !== 'folder') return;
 
         const zip = new JSZip();
         const folderFullPath = [...folder.path, folder.name];
 
-        // Find items that start with this path (recursively)
-        const items = uploadedFiles.filter(f => {
-            if (f.type === 'folder') return false;
-            if (f.path.length < folderFullPath.length) return false;
-            for (let i = 0; i < folderFullPath.length; i++) {
-                if (f.path[i] !== folderFullPath[i]) return false;
-            }
-            return true;
-        });
+        const items = [];
+        const pendingFolders = [folderFullPath];
+        const visited = new Set();
+
+        while (pendingFolders.length) {
+            const p = pendingFolders.shift();
+            const key = makePathKey(p);
+            if (visited.has(key)) continue;
+            visited.add(key);
+
+            const snap = await db.collection('files').where('path', '==', p).get();
+            snap.forEach((doc) => {
+                const data = doc.data() || {};
+                if (data.type === 'file') items.push({ id: doc.id, ...data });
+                else if (data.type === 'folder' && data.name) pendingFolders.push([...p, data.name]);
+            });
+        }
 
         console.log('Items to download:', items);
 
@@ -1080,52 +1133,72 @@ document.addEventListener('DOMContentLoaded', function () {
     // --- Admin Actions ---
     window.deleteItem = function (id) {
         if (!isAdmin) return;
-        const item = uploadedFiles.find(f => f.id == id);
-        if (!item) return;
+        if (!db) return;
 
-        if (item.type === 'folder') {
+        db.collection('files').doc(id).get().then(async (snap) => {
+            if (!snap.exists) return;
+            const item = { id: snap.id, ...snap.data() };
+
+            if (item.type !== 'folder') {
+                await db.collection('files').doc(id).delete();
+                return;
+            }
+
             if (!confirm(`Delete folder "${item.name}"?`)) return;
-            const folderFullPath = [...item.path, item.name];
+            const folderFullPath = [...(item.path || []), item.name];
 
-            // Delete recursive locally logic applied to DB
-            // 1. Find all children
-            const children = uploadedFiles.filter(f => {
-                if (f.path.length >= folderFullPath.length) {
-                    let match = true;
-                    for (let i = 0; i < folderFullPath.length; i++) {
-                        if (f.path[i] !== folderFullPath[i]) {
-                            match = false;
-                            break;
-                        }
-                    }
-                    return match;
-                }
-                return false;
-            });
+            const idsToDelete = [];
+            const pendingFolders = [folderFullPath];
+            const visited = new Set();
 
-            // 2. Delete all children + folder itself
-            const batch = db.batch();
-            children.forEach(child => {
-                batch.delete(db.collection('files').doc(child.id));
-                // TODO: Delete actual file from storage? That requires cloud functions or client loop
-            });
-            batch.delete(db.collection('files').doc(id));
-            batch.commit();
+            while (pendingFolders.length) {
+                const p = pendingFolders.shift();
+                const key = makePathKey(p);
+                if (visited.has(key)) continue;
+                visited.add(key);
 
-        } else {
-            db.collection('files').doc(id).delete();
-            // TODO: Delete from storage
-        }
+                const childrenSnap = await db.collection('files').where('path', '==', p).get();
+                childrenSnap.forEach((doc) => {
+                    const data = doc.data() || {};
+                    idsToDelete.push(doc.id);
+                    if (data.type === 'folder' && data.name) pendingFolders.push([...p, data.name]);
+                });
+            }
+
+            idsToDelete.push(id);
+
+            for (let i = 0; i < idsToDelete.length; i += 450) {
+                const chunk = idsToDelete.slice(i, i + 450);
+                const batch = db.batch();
+                for (const docId of chunk) batch.delete(db.collection('files').doc(docId));
+                await batch.commit();
+            }
+        }).catch(handleListenerError);
     };
 
     window.deleteAllFiles = function () {
         if (!isAdmin) return;
-        if (confirm(t('deleteAllConfirm'))) {
-            // For small datasets, client side loop is fine
-            uploadedFiles.forEach(f => {
-                db.collection('files').doc(f.id).delete();
-            });
-        }
+        if (!db) return;
+        if (!confirm(t('deleteAllConfirm'))) return;
+
+        const idField = firebase.firestore.FieldPath.documentId();
+        let lastDoc = null;
+
+        const run = async () => {
+            while (true) {
+                let q = db.collection('files').orderBy(idField).limit(500);
+                if (lastDoc) q = q.startAfter(lastDoc);
+                const snap = await q.get();
+                if (snap.empty) break;
+
+                const batch = db.batch();
+                snap.docs.forEach((d) => batch.delete(d.ref));
+                await batch.commit();
+                lastDoc = snap.docs[snap.docs.length - 1];
+            }
+        };
+
+        run().catch(handleListenerError);
     };
 
     function formatFileSize(bytes) {
