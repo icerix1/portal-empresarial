@@ -11,15 +11,21 @@ exports.downloadProxy = functions.https.onRequest((req, res) => {
       const filePath = decodeURIComponent(req.query.filePath);
       const file = bucket.file(filePath);
       
-      const [downloadURL] = await file.getSignedUrl({
-        action: "read",
-        expires: Date.now() + 15 * 60 * 1000, // 15 min
-      });
+      // Configurar headers CORS
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET');
       
-      res.redirect(downloadURL);
+      // Stream directo del archivo
+      const readStream = file.createReadStream();
+      readStream.pipe(res);
+      
+      readStream.on('error', (error) => {
+        console.error('Stream error:', error);
+        res.status(500).send('Error descargando archivo');
+      });
     } catch (error) {
-      console.error("Proxy error:", error);
-      res.status(500).send("Error descargando archivo");
+      console.error('Proxy error:', error);
+      res.status(500).send('Error descargando archivo');
     }
   });
 });

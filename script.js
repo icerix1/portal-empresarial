@@ -701,15 +701,14 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        let promises = [];
         for (const file of items) {
             try {
-                // Use the proxy function
-                const proxyUrl = `https://us-central1-compresor-de-archivos-15e3a.cloudfunctions.net/downloadProxy?filePath=${encodeURIComponent(file.path)}`;
-
+                // Usar el proxy actualizado
+                const proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?filePath=${encodeURIComponent(file.path)}`;
+                
                 const response = await fetch(proxyUrl);
                 if (!response.ok) throw new Error('Network response was not ok');
-
+                
                 const blob = await response.blob();
                 zip.file(file.name, blob);
             } catch (error) {
