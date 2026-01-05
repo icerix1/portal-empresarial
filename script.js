@@ -1269,9 +1269,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         const createdAt = Date.now();
-        const otherLang = currentLang === 'es' ? 'en' : 'es';
-        const titleByLang = { [currentLang]: title, [otherLang]: '' };
-        const contentByLang = { [currentLang]: content, [otherLang]: '' };
 
         db.collection('posts').add({
             id: createdAt,
@@ -1279,8 +1276,6 @@ document.addEventListener('DOMContentLoaded', function () {
             lang: currentLang,
             title,
             content,
-            titleByLang,
-            contentByLang,
             comments: []
         });
 
@@ -1320,26 +1315,6 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         };
 
-        const isTranslationMissing = (post, byLang) => {
-            const storedLang = (post && typeof post.lang === 'string' && post.lang) ? post.lang : 'es';
-            if (storedLang === currentLang) return false;
-            if (!byLang || typeof byLang !== 'object') return true;
-            const candidate = byLang[currentLang];
-            return !(typeof candidate === 'string' && candidate.trim());
-        };
-
-        const getLocalizedText = (post, byLang, fallbackText) => {
-            if (isTranslationMissing(post, byLang)) return t('translationMissing');
-            if (byLang && typeof byLang === 'object') {
-                const candidate = byLang[currentLang];
-                if (typeof candidate === 'string' && candidate.trim()) return candidate;
-                const alt = currentLang === 'es' ? byLang.en : byLang.es;
-                if (typeof alt === 'string' && alt.trim()) return alt;
-            }
-            if (typeof fallbackText === 'string') return fallbackText;
-            return '';
-        };
-
         const getCommentLocalizedText = (comment) => {
             if (!comment) return '';
             const byLang = comment.textByLang;
@@ -1354,10 +1329,10 @@ document.addEventListener('DOMContentLoaded', function () {
         blogsContainer.innerHTML = blogPosts.map(post => `
             <div class="post-item" id="post-${post.id}">
                 <div class="post-header">
-                    <h3 class="post-title">${escapeHtml(getLocalizedText(post, post.titleByLang, post.title))}</h3>
+                    <h3 class="post-title">${escapeHtml(typeof post.title === 'string' ? post.title : '')}</h3>
                     <span class="post-date">${escapeHtml(formatPostDate(post))}</span>
                 </div>
-                <p class="post-content">${escapeHtml(getLocalizedText(post, post.contentByLang, post.content))}</p>
+                <p class="post-content">${escapeHtml(typeof post.content === 'string' ? post.content : '')}</p>
                 ${isAdmin ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${post.firebaseId}')">${t('delete')}</button></div>` : ''}
                 
                 <div class="comments-section">
