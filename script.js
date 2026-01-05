@@ -1436,6 +1436,21 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!author) author = t('anonymous');
         if (!text) { alert(t('writeCommentAlert')); return; }
 
+        let postDocId = typeof firebaseId === 'string' ? firebaseId.trim() : '';
+        if (!postDocId) {
+            const match = (Array.isArray(blogPosts) ? blogPosts : []).find((p) => {
+                if (!p) return false;
+                const sameId = p.id === postId || p.createdAt === postId;
+                if (!sameId) return false;
+                return typeof p.firebaseId === 'string' && p.firebaseId.trim();
+            });
+            if (match) postDocId = match.firebaseId.trim();
+        }
+        if (!postDocId) {
+            alert('No se pudo identificar la publicación. Recargá la página.');
+            return;
+        }
+
         const ensureAuth = async () => {
             if (!firebase.auth) throw new Error('auth-sdk-missing');
             const auth = firebase.auth();
@@ -1462,7 +1477,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const fns = app && app.functions ? app.functions('us-central1') : firebase.functions();
             const addCommentFn = fns.httpsCallable('addComment');
             return addCommentFn({
-                postId: firebaseId,
+                postId: postDocId,
                 author,
                 text,
                 lang: currentLang,
