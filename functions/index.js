@@ -77,13 +77,6 @@ async function translateText(text, source, target) {
 }
 
 exports.addComment = functions.https.onCall(async (data, context) => {
-  if (!context || !context.auth || !context.auth.uid) {
-    throw new functions.https.HttpsError(
-        "unauthenticated",
-        "Authentication required",
-    );
-  }
-
   const postId = clampLen(data && data.postId, 128);
   const text = clampLen(data && data.text, 800);
   const author = clampLen(data && data.author, 30);
@@ -103,7 +96,8 @@ exports.addComment = functions.https.onCall(async (data, context) => {
     );
   }
 
-  const uid = context.auth.uid;
+  const uid =
+    context && context.auth && context.auth.uid ? String(context.auth.uid) : "";
   const createdAt = Date.now();
   const commentId = `${createdAt}_${uid}_${Math.random()
       .toString(36)
@@ -118,7 +112,7 @@ exports.addComment = functions.https.onCall(async (data, context) => {
 
   const comment = {
     id: commentId,
-    uid,
+    uid: uid || null,
     author: author || "Anonymous",
     text,
     lang,
