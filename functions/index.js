@@ -29,14 +29,16 @@ exports.downloadProxy = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const bucketName = typeof rawBucket === "string" ? decodeURIComponent(rawBucket) : "";
+    const bucketName =
+      typeof rawBucket === "string" ? decodeURIComponent(rawBucket) : "";
 
-    const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "";
+    const projectId =
+      process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "";
     const candidates = uniq([
       bucketName,
-      bucketName && bucketName.endsWith(".firebasestorage.app")
-        ? bucketName.replace(/\.firebasestorage\.app$/, ".appspot.com")
-        : "",
+      bucketName && bucketName.endsWith(".firebasestorage.app") ?
+        bucketName.replace(/\.firebasestorage\.app$/, ".appspot.com") :
+        "",
       projectId ? `${projectId}.appspot.com` : "",
       projectId ? `${projectId}.firebasestorage.app` : "",
     ]);

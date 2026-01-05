@@ -42,7 +42,8 @@ const translations = {
         deleteAll: 'Eliminar Todo',
         deleteAllConfirm: '¿Estás seguro de que quieres eliminar TODOS los archivos? Esta acción no se puede deshacer.',
         download: 'Descargar',
-        donatePaypal: 'Donaciones por PayPal'
+        donatePaypal: 'Donaciones por PayPal',
+        back: 'Volver'
     },
     en: {
         portal: 'Business Portal',
@@ -84,7 +85,8 @@ const translations = {
         deleteAll: 'Delete All',
         deleteAllConfirm: 'Are you sure you want to delete ALL files? This action cannot be undone.',
         download: 'Download',
-        donatePaypal: 'Donate via PayPal'
+        donatePaypal: 'Donate via PayPal',
+        back: 'Back'
     }
 };
 
@@ -845,8 +847,14 @@ document.addEventListener('DOMContentLoaded', function () {
                             const rel = file && file.webkitRelativePath ? String(file.webkitRelativePath) : '';
                             if (rel) metadata.relativePath = rel;
 
-                            db.collection('files').add(metadata).then(() => {
+                            db.collection('files').add(metadata).then((docRef) => {
                                 console.log(`✅ Uploaded: ${file.name}`);
+                                try {
+                                    if (makePathKey(pathArray) === currentPathKey && docRef && docRef.id) {
+                                        currentFolderItems.unshift({ id: docRef.id, ...metadata });
+                                        queueRenderFiles();
+                                    }
+                                } catch (e) { }
                                 try { progressRow.remove(); } catch (e) { }
                                 resolve({ ok: true });
                             }).catch((error) => {
@@ -893,6 +901,15 @@ document.addEventListener('DOMContentLoaded', function () {
         return '…';
     }
 
+    function getFileDisplaySize(item) {
+        const raw = (typeof item.rawSize === 'number')
+            ? item.rawSize
+            : (typeof item.rawSize === 'string' ? Number(item.rawSize) : NaN);
+        if (Number.isFinite(raw) && raw >= 0) return formatFileSize(raw);
+        if (typeof item.size === 'string' && item.size.trim()) return item.size;
+        return '-';
+    }
+
     window.renderFiles = function () {
         const filesContainer = document.getElementById('filesContainer');
         const breadcrumbs = document.getElementById('breadcrumbs');
@@ -919,10 +936,12 @@ document.addEventListener('DOMContentLoaded', function () {
             const icon = item.type === 'folder' ? '📁' : '📄';
             const iconClass = item.type === 'folder' ? 'icon-folder' : 'icon-file';
             const onclick = item.type === 'folder' ? `onclick="navigateTo('${item.name}')"` : '';
-            const size = item.type === 'folder' ? calculateFolderSize(item) : item.size;
+            const size = item.type === 'folder' ? calculateFolderSize(item) : getFileDisplaySize(item);
+            const downloadLabel = t('download');
+            const deleteLabel = t('delete');
             const actionBtn = item.type === 'folder'
-                ? `<button class="btn-icon" onclick="downloadFolder('${item.id}')" title="${t('download')}">⬇️</button>`
-                : `<a href="${item.url}" target="_blank" class="btn-icon" title="${t('download')}" download>⬇️</a>`;
+                ? `<button class="btn-action btn-action-primary" onclick="downloadFolder('${item.id}')" type="button">${downloadLabel}</button>`
+                : `<a href="${item.url}" target="_blank" class="btn-action btn-action-primary" download>${downloadLabel}</a>`;
 
             return `
             <tr>
@@ -934,7 +953,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 <td>${item.date}</td>
                 <td class="actions-cell">
                     ${actionBtn}
-                    <button class="btn-icon ${isAdmin ? '' : 'hidden'}" onclick="deleteItem('${item.id}')" title="${t('delete')}">🗑️</button>
+                    <button class="btn-action btn-action-danger ${isAdmin ? '' : 'hidden'}" onclick="deleteItem('${item.id}')" type="button">${deleteLabel}</button>
                 </td>
             </tr>
             `;
@@ -942,7 +961,12 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     function renderBreadcrumbs(container) {
-        let html = `<span class="breadcrumb-item ${currentPath.length === 0 ? 'breadcrumb-current' : ''}" onclick="navigateToRoot()">🏠 Home</span>`;
+        const showBack = currentPath.length > 0;
+        let html = '';
+        if (showBack) {
+            html += `<button class="btn btn-outline btn-sm btn-back" type="button" onclick="navigateBack()">${t('back')}</button>`;
+        }
+        html += `<span class="breadcrumb-item ${currentPath.length === 0 ? 'breadcrumb-current' : ''}" onclick="navigateToRoot()">🏠</span>`;
 
         currentPath.forEach((folder, index) => {
             html += ` <span class="breadcrumb-separator">/</span> `;
@@ -957,6 +981,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // --- Navigation Actions ---
+    window.navigateBack = function () {
+        if (currentPath.length === 0) return;
+        setCurrentPath(currentPath.slice(0, -1));
+        window.renderFiles();
+    };
     window.navigateTo = function (folderName) {
         setCurrentPath([...currentPath, folderName]);
         window.renderFiles();

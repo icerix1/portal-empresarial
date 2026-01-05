@@ -784,22 +784,45 @@ textarea.form-control {
 .actions-cell {
     display: flex;
     gap: 0.5rem;
+    align-items: center;
 }
 
-.btn-icon {
+.btn-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border-radius: 6px;
+    border: 1px solid transparent;
     background: transparent;
-    border: none;
     cursor: pointer;
-    font-size: 1.1rem;
-    padding: 0.25rem;
-    color: var(--secondary);
+    text-decoration: none;
     transition: var(--transition);
+    line-height: 1.1;
 }
 
-.btn-icon:hover {
+.btn-action-primary {
+    border-color: var(--primary);
     color: var(--primary);
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 4px;
+}
+
+.btn-action-primary:hover {
+    background: rgba(26, 86, 219, 0.08);
+}
+
+.btn-action-danger {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.btn-action-danger:hover {
+    background: rgba(220, 38, 38, 0.08);
+}
+
+.btn-back {
+    margin-right: 0.5rem;
 }
 
 /* ========================================
