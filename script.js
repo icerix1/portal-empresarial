@@ -43,7 +43,8 @@ const translations = {
         deleteAllConfirm: '¿Estás seguro de que quieres eliminar TODOS los archivos? Esta acción no se puede deshacer.',
         download: 'Descargar',
         donatePaypal: 'Donaciones por PayPal',
-        back: 'Volver'
+        back: 'Volver',
+        translationMissing: 'Sin traducción disponible'
     },
     en: {
         portal: "Icerix's blog",
@@ -86,7 +87,8 @@ const translations = {
         deleteAllConfirm: 'Are you sure you want to delete ALL files? This action cannot be undone.',
         download: 'Download',
         donatePaypal: 'Donate via PayPal',
-        back: 'Back'
+        back: 'Back',
+        translationMissing: 'No translation available'
     }
 };
 
@@ -421,6 +423,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let folderSizeBytesByFullPathKey = new Map();
     let folderSizeInFlightByFullPathKey = new Map();
     let blogPosts = [];
+    let blogDraftsByPostId = new Map();
     let listenersStarted = false;
     let permissionAlertShown = false;
     let activeUploadSession = null;
@@ -1268,6 +1271,7 @@ document.addEventListener('DOMContentLoaded', function () {
         db.collection('posts').add({
             id: createdAt,
             createdAt,
+            lang: currentLang,
             title,
             content,
             titleByLang,
@@ -1282,6 +1286,19 @@ document.addEventListener('DOMContentLoaded', function () {
     window.renderBlogs = function () {
         const blogsContainer = document.getElementById('blogsContainer');
         if (!blogsContainer) return;
+
+        try {
+            blogPosts.forEach((post) => {
+                const authorEl = document.getElementById(`author-${post.id}`);
+                const commentEl = document.getElementById(`comment-${post.id}`);
+                if (!authorEl && !commentEl) return;
+                const existing = blogDraftsByPostId.get(post.id) || {};
+                blogDraftsByPostId.set(post.id, {
+                    author: authorEl ? authorEl.value : existing.author || '',
+                    comment: commentEl ? commentEl.value : existing.comment || ''
+                });
+            });
+        } catch (e) { }
 
         if (blogPosts.length === 0) {
             blogsContainer.innerHTML = `<p class="empty-message">${t('noPosts')}</p>`;
@@ -1298,7 +1315,16 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         };
 
-        const getLocalizedText = (byLang, fallbackText) => {
+        const isTranslationMissing = (post, byLang) => {
+            const storedLang = (post && typeof post.lang === 'string' && post.lang) ? post.lang : 'es';
+            if (storedLang === currentLang) return false;
+            if (!byLang || typeof byLang !== 'object') return true;
+            const candidate = byLang[currentLang];
+            return !(typeof candidate === 'string' && candidate.trim());
+        };
+
+        const getLocalizedText = (post, byLang, fallbackText) => {
+            if (isTranslationMissing(post, byLang)) return t('translationMissing');
             if (byLang && typeof byLang === 'object') {
                 const candidate = byLang[currentLang];
                 if (typeof candidate === 'string' && candidate.trim()) return candidate;
@@ -1312,10 +1338,10 @@ document.addEventListener('DOMContentLoaded', function () {
         blogsContainer.innerHTML = blogPosts.map(post => `
             <div class="post-item" id="post-${post.id}">
                 <div class="post-header">
-                    <h3 class="post-title">${escapeHtml(getLocalizedText(post.titleByLang, post.title))}</h3>
+                    <h3 class="post-title">${escapeHtml(getLocalizedText(post, post.titleByLang, post.title))}</h3>
                     <span class="post-date">${escapeHtml(formatPostDate(post))}</span>
                 </div>
-                <p class="post-content">${escapeHtml(getLocalizedText(post.contentByLang, post.content))}</p>
+                <p class="post-content">${escapeHtml(getLocalizedText(post, post.contentByLang, post.content))}</p>
                 ${isAdmin ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${post.firebaseId}')">${t('delete')}</button></div>` : ''}
                 
                 <div class="comments-section">
@@ -1340,6 +1366,28 @@ document.addEventListener('DOMContentLoaded', function () {
                 </div>
             </div>
         `).join('');
+
+        try {
+            blogPosts.forEach((post) => {
+                const draft = blogDraftsByPostId.get(post.id) || { author: '', comment: '' };
+                const authorEl = document.getElementById(`author-${post.id}`);
+                const commentEl = document.getElementById(`comment-${post.id}`);
+                if (authorEl) {
+                    authorEl.value = draft.author || '';
+                    authorEl.oninput = () => {
+                        const cur = blogDraftsByPostId.get(post.id) || {};
+                        blogDraftsByPostId.set(post.id, { ...cur, author: authorEl.value });
+                    };
+                }
+                if (commentEl) {
+                    commentEl.value = draft.comment || '';
+                    commentEl.oninput = () => {
+                        const cur = blogDraftsByPostId.get(post.id) || {};
+                        blogDraftsByPostId.set(post.id, { ...cur, comment: commentEl.value });
+                    };
+                }
+            });
+        } catch (e) { }
     };
 
     window.handleComment = function (e, firebaseId, postId) {
@@ -1349,7 +1397,7 @@ document.addEventListener('DOMContentLoaded', function () {
     window.addComment = function (firebaseId, postId) {
         const authorInput = document.getElementById(`author-${postId}`);
         const input = document.getElementById(`comment-${postId}`);
-        const text = input.value.trim();
+        const text = input ? input.value.trim() : '';
         let author = authorInput.value.trim();
 
         if (!author) author = t('anonymous');
@@ -1365,6 +1413,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 createdAt: Date.now(),
                 isAdmin
             })
+        }).then(() => {
+            if (input) input.value = '';
+            const cur = blogDraftsByPostId.get(postId) || {};
+            blogDraftsByPostId.set(postId, { ...cur, comment: '' });
+        }).catch((error) => {
+            console.error('Error adding comment:', error);
+            alert('No se pudo guardar el comentario. Revisá permisos/reglas de Firestore.');
         });
     };
 
