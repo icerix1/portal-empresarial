@@ -429,6 +429,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let activeUploadSession = null;
     let filesUnsubscribe = null;
     let renderFilesQueued = false;
+    let renderBlogsQueued = false;
 
     function makePathKey(pathArray) {
         const arr = Array.isArray(pathArray) ? pathArray : [];
@@ -449,6 +450,15 @@ document.addEventListener('DOMContentLoaded', function () {
         requestAnimationFrame(() => {
             renderFilesQueued = false;
             if (typeof window.renderFiles === 'function') window.renderFiles();
+        });
+    }
+
+    function queueRenderBlogs() {
+        if (renderBlogsQueued) return;
+        renderBlogsQueued = true;
+        requestAnimationFrame(() => {
+            renderBlogsQueued = false;
+            if (typeof window.renderBlogs === 'function') window.renderBlogs();
         });
     }
 
@@ -515,15 +525,10 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!currentPathKey) setCurrentPath([]);
         subscribeFilesForCurrentPath();
 
-        db.collection('posts').orderBy('id', 'desc').get().then((postsSnapshot) => {
-            blogPosts = postsSnapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
-            if (typeof window.renderBlogs === 'function') window.renderBlogs();
-        }).catch(handleListenerError);
-
         db.collection('posts').orderBy('id', 'desc').onSnapshot(
             (snapshot) => {
                 blogPosts = snapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
-                if (typeof window.renderBlogs === 'function') window.renderBlogs();
+                queueRenderBlogs();
             },
             handleListenerError
         );
@@ -1335,6 +1340,17 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         };
 
+        const getCommentLocalizedText = (comment) => {
+            if (!comment) return '';
+            const byLang = comment.textByLang;
+            if (byLang && typeof byLang === 'object') {
+                const candidate = byLang[currentLang];
+                if (typeof candidate === 'string' && candidate.trim()) return candidate;
+            }
+            if (typeof comment.text === 'string') return comment.text;
+            return '';
+        };
+
         blogsContainer.innerHTML = blogPosts.map(post => `
             <div class="post-item" id="post-${post.id}">
                 <div class="post-header">
@@ -1354,7 +1370,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <span class="comment-date">${escapeHtml((typeof c.createdAt === 'number' && Number.isFinite(c.createdAt)) ? new Date(c.createdAt).toLocaleDateString(dateLocale) : (c.date || ''))}</span>
                                     ${isAdmin ? `<button class="btn-delete-comment" onclick="deleteComment('${post.firebaseId}', ${idx})">×</button>` : ''}
                                 </div>
-                                <p class="comment-text">${escapeHtml(c.text)}</p>
+                                <p class="comment-text">${escapeHtml(getCommentLocalizedText(c))}</p>
                             </div>
                         `).join('')}
                     </div>
@@ -1403,23 +1419,29 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!author) author = t('anonymous');
         if (!text) { alert(t('writeCommentAlert')); return; }
 
-        const postRef = db.collection('posts').doc(firebaseId);
+        const ensureAuth = () => {
+            if (firebase.auth && firebase.auth().currentUser) return Promise.resolve();
+            if (firebase.auth) return firebase.auth().signInAnonymously().then(() => { }).catch(() => { });
+            return Promise.resolve();
+        };
 
-        // Firestore arrayUnion to add comment
-        postRef.update({
-            comments: firebase.firestore.FieldValue.arrayUnion({
+        ensureAuth().then(() => {
+            if (!firebase.functions) throw new Error('Functions SDK not available');
+            const addCommentFn = firebase.functions().httpsCallable('addComment');
+            return addCommentFn({
+                postId: firebaseId,
                 author,
                 text,
-                createdAt: Date.now(),
+                lang: currentLang,
                 isAdmin
-            })
+            });
         }).then(() => {
             if (input) input.value = '';
             const cur = blogDraftsByPostId.get(postId) || {};
             blogDraftsByPostId.set(postId, { ...cur, comment: '' });
         }).catch((error) => {
             console.error('Error adding comment:', error);
-            alert('No se pudo guardar el comentario. Revisá permisos/reglas de Firestore.');
+            alert('No se pudo guardar el comentario. Revisá configuración de Functions/Auth y permisos.');
         });
     };
 

@@ -334,6 +334,7 @@ body {
 
 .card-files .card-header {
     border-bottom: none;
+    padding-top: 1.35rem;
 }
 
 .card-files .breadcrumbs {
