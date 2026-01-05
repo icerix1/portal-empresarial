@@ -543,7 +543,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         db.collection('posts').orderBy('id', 'desc').onSnapshot(
             (snapshot) => {
-                blogPosts = snapshot.docs.map(doc => ({ firebaseId: doc.id, ...doc.data() }));
+                blogPosts = snapshot.docs.map((doc) => ({ ...doc.data(), firebaseId: doc.id }));
                 queueRenderBlogs();
             },
             handleListenerError
