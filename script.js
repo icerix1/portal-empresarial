@@ -3,7 +3,7 @@
 // ========================================
 const translations = {
     es: {
-        portal: 'Portal Empresarial',
+        portal: 'Compresor + nube',
         documents: 'Documentos',
         publications: 'Publicaciones',
         adminMode: '🔐 Modo Administrador activo',
@@ -28,7 +28,7 @@ const translations = {
         publish: 'Publicar',
         recentPosts: 'Publicaciones Recientes',
         noPosts: 'No hay publicaciones disponibles',
-        copyright: '© 2026 Portal Empresarial. Todos los derechos reservados.',
+        copyright: '© 2026 Compresor + nube. Todos los derechos reservados.',
         delete: 'Eliminar',
         comments: 'Comentarios',
         yourName: 'Tu nombre',
@@ -46,7 +46,7 @@ const translations = {
         back: 'Volver'
     },
     en: {
-        portal: 'Business Portal',
+        portal: 'Compresor + nube',
         documents: 'Documents',
         publications: 'Publications',
         adminMode: '🔐 Administrator Mode active',
@@ -71,7 +71,7 @@ const translations = {
         publish: 'Publish',
         recentPosts: 'Recent Posts',
         noPosts: 'No posts available',
-        copyright: '© 2026 Business Portal. All rights reserved.',
+        copyright: '© 2026 Compresor + nube. All rights reserved.',
         delete: 'Delete',
         comments: 'Comments',
         yourName: 'Your name',
@@ -966,10 +966,9 @@ document.addEventListener('DOMContentLoaded', function () {
         if (showBack) {
             html += `<button class="btn btn-outline btn-sm btn-back" type="button" onclick="navigateBack()">${t('back')}</button>`;
         }
-        html += `<span class="breadcrumb-item ${currentPath.length === 0 ? 'breadcrumb-current' : ''}" onclick="navigateToRoot()">🏠</span>`;
 
         currentPath.forEach((folder, index) => {
-            html += ` <span class="breadcrumb-separator">/</span> `;
+            if (index > 0) html += ` <span class="breadcrumb-separator">/</span> `;
             const isLast = index === currentPath.length - 1;
             if (isLast) {
                 html += `<span class="breadcrumb-current">${escapeHtml(folder)}</span>`;
