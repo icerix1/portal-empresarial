@@ -21,6 +21,14 @@ const translations = {
         noFiles: 'No hay archivos disponibles',
         newsContent: 'Contenido y novedades',
         newPost: 'Nueva Publicación',
+        titleEs: 'Título (ES)',
+        contentEs: 'Contenido (ES)',
+        enterTitleEs: 'Ingrese el título en español',
+        writeContentEs: 'Escriba el contenido en español...',
+        titleEn: 'Título (EN)',
+        contentEn: 'Contenido (EN)',
+        enterTitleEn: 'Ingrese el título en inglés',
+        writeContentEn: 'Escriba el contenido en inglés...',
         title: 'Título',
         content: 'Contenido',
         enterTitle: 'Ingrese el título',
@@ -65,6 +73,14 @@ const translations = {
         noFiles: 'No files available',
         newsContent: 'News and updates',
         newPost: 'New Post',
+        titleEs: 'Title (ES)',
+        contentEs: 'Content (ES)',
+        enterTitleEs: 'Enter the Spanish title',
+        writeContentEs: 'Write the Spanish content...',
+        titleEn: 'Title (EN)',
+        contentEn: 'Content (EN)',
+        enterTitleEn: 'Enter the English title',
+        writeContentEn: 'Write the English content...',
         title: 'Title',
         content: 'Content',
         enterTitle: 'Enter the title',
@@ -1260,27 +1276,38 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.publishBlog = function () {
         if (!isAdmin) return;
-        const title = document.getElementById('blogTitle').value.trim();
-        const content = document.getElementById('blogContent').value.trim();
+        const titleEsEl = document.getElementById('blogTitleEs');
+        const contentEsEl = document.getElementById('blogContentEs');
+        const titleEnEl = document.getElementById('blogTitleEn');
+        const contentEnEl = document.getElementById('blogContentEn');
 
-        if (!title || !content) {
+        const titleEs = titleEsEl ? titleEsEl.value.trim() : '';
+        const contentEs = contentEsEl ? contentEsEl.value.trim() : '';
+        const titleEn = titleEnEl ? titleEnEl.value.trim() : '';
+        const contentEn = contentEnEl ? contentEnEl.value.trim() : '';
+
+        if (!titleEs || !contentEs || !titleEn || !contentEn) {
             alert(t('completeFields'));
             return;
         }
 
         const createdAt = Date.now();
+        const titleByLang = { es: titleEs, en: titleEn };
+        const contentByLang = { es: contentEs, en: contentEn };
 
         db.collection('posts').add({
             id: createdAt,
             createdAt,
-            lang: currentLang,
-            title,
-            content,
+            lang: 'multi',
+            titleByLang,
+            contentByLang,
             comments: []
         });
 
-        document.getElementById('blogTitle').value = '';
-        document.getElementById('blogContent').value = '';
+        if (titleEsEl) titleEsEl.value = '';
+        if (contentEsEl) contentEsEl.value = '';
+        if (titleEnEl) titleEnEl.value = '';
+        if (contentEnEl) contentEnEl.value = '';
     };
 
     window.renderBlogs = function () {
@@ -1315,6 +1342,22 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         };
 
+        const getPostLocalizedText = (post, key) => {
+            if (!post) return '';
+            const byLang = post[key];
+            if (byLang && typeof byLang === 'object') {
+                const candidate = byLang[currentLang];
+                if (typeof candidate === 'string' && candidate.trim()) return candidate;
+                if (Object.prototype.hasOwnProperty.call(byLang, currentLang)) return t('translationMissing');
+                if (typeof byLang.es === 'string' && byLang.es.trim()) return byLang.es;
+                if (typeof byLang.en === 'string' && byLang.en.trim()) return byLang.en;
+                return t('translationMissing');
+            }
+            if (key === 'titleByLang' && typeof post.title === 'string') return post.title;
+            if (key === 'contentByLang' && typeof post.content === 'string') return post.content;
+            return '';
+        };
+
         const getCommentLocalizedText = (comment) => {
             if (!comment) return '';
             const byLang = comment.textByLang;
@@ -1329,10 +1372,10 @@ document.addEventListener('DOMContentLoaded', function () {
         blogsContainer.innerHTML = blogPosts.map(post => `
             <div class="post-item" id="post-${post.id}">
                 <div class="post-header">
-                    <h3 class="post-title">${escapeHtml(typeof post.title === 'string' ? post.title : '')}</h3>
+                    <h3 class="post-title">${escapeHtml(getPostLocalizedText(post, 'titleByLang'))}</h3>
                     <span class="post-date">${escapeHtml(formatPostDate(post))}</span>
                 </div>
-                <p class="post-content">${escapeHtml(typeof post.content === 'string' ? post.content : '')}</p>
+                <p class="post-content">${escapeHtml(getPostLocalizedText(post, 'contentByLang'))}</p>
                 ${isAdmin ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${post.firebaseId}')">${t('delete')}</button></div>` : ''}
                 
                 <div class="comments-section">

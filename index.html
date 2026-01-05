@@ -119,14 +119,24 @@
                     <div class="card-body">
                         <form class="form" id="blogForm">
                             <div class="form-group">
-                                <label for="blogTitle" data-i18n="title">Título</label>
-                                <input type="text" id="blogTitle" class="form-control"
-                                    data-i18n-placeholder="enterTitle">
+                                <label for="blogTitleEs" data-i18n="titleEs">Título (ES)</label>
+                                <input type="text" id="blogTitleEs" class="form-control"
+                                    data-i18n-placeholder="enterTitleEs">
                             </div>
                             <div class="form-group">
-                                <label for="blogContent" data-i18n="content">Contenido</label>
-                                <textarea id="blogContent" class="form-control" rows="5"
-                                    data-i18n-placeholder="writeContent"></textarea>
+                                <label for="blogContentEs" data-i18n="contentEs">Contenido (ES)</label>
+                                <textarea id="blogContentEs" class="form-control" rows="5"
+                                    data-i18n-placeholder="writeContentEs"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="blogTitleEn" data-i18n="titleEn">Title (EN)</label>
+                                <input type="text" id="blogTitleEn" class="form-control"
+                                    data-i18n-placeholder="enterTitleEn">
+                            </div>
+                            <div class="form-group">
+                                <label for="blogContentEn" data-i18n="contentEn">Content (EN)</label>
+                                <textarea id="blogContentEn" class="form-control" rows="5"
+                                    data-i18n-placeholder="writeContentEn"></textarea>
                             </div>
                             <div class="form-actions">
                                 <button type="button" class="btn btn-primary" onclick="publishBlog()"
