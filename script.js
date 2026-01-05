@@ -557,7 +557,6 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         auth.signInAnonymously().catch((error) => {
             console.error("Anonymous sign-in failed:", error);
-            startRealtimeListeners();
         });
     } else {
         startRealtimeListeners();
@@ -1437,15 +1436,31 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!author) author = t('anonymous');
         if (!text) { alert(t('writeCommentAlert')); return; }
 
-        const ensureAuth = () => {
-            if (firebase.auth && firebase.auth().currentUser) return Promise.resolve();
-            if (firebase.auth) return firebase.auth().signInAnonymously().then(() => { }).catch(() => { });
-            return Promise.resolve();
+        const ensureAuth = async () => {
+            if (!firebase.auth) throw new Error('auth-sdk-missing');
+            const auth = firebase.auth();
+            if (auth.currentUser) return auth.currentUser;
+            await auth.signInAnonymously();
+            if (!auth.currentUser) throw new Error('auth-missing');
+            return auth.currentUser;
+        };
+
+        const friendlyAuthError = (error) => {
+            const code = error && (error.code || error.message) ? String(error.code || error.message) : '';
+            if (code.includes('auth/operation-not-allowed')) {
+                return 'No se pudo iniciar sesión anónima. Activá "Anonymous" en Firebase Auth.';
+            }
+            if (code.includes('auth/unauthorized-domain')) {
+                return 'Dominio no autorizado. Agregá "icerix1.github.io" en Firebase Auth → Authorized domains.';
+            }
+            return 'No se pudo autenticar. Revisá Firebase Auth (Anonymous) y dominios autorizados.';
         };
 
         ensureAuth().then(() => {
-            if (!firebase.functions) throw new Error('Functions SDK not available');
-            const addCommentFn = firebase.functions().httpsCallable('addComment');
+            if (!firebase.functions) throw new Error('functions-sdk-missing');
+            const app = firebase.app ? firebase.app() : null;
+            const fns = app && app.functions ? app.functions('us-central1') : firebase.functions();
+            const addCommentFn = fns.httpsCallable('addComment');
             return addCommentFn({
                 postId: firebaseId,
                 author,
@@ -1459,6 +1474,10 @@ document.addEventListener('DOMContentLoaded', function () {
             blogDraftsByPostId.set(postId, { ...cur, comment: '' });
         }).catch((error) => {
             console.error('Error adding comment:', error);
+            if (error && String(error.code || '').includes('unauthenticated')) {
+                alert(friendlyAuthError(error));
+                return;
+            }
             alert('No se pudo guardar el comentario. Revisá configuración de Functions/Auth y permisos.');
         });
     };
