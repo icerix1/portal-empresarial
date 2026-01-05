@@ -3,7 +3,7 @@
 // ========================================
 const translations = {
     es: {
-        portal: 'Compresor + nube',
+        portal: 'Blog de Icerix',
         documents: 'Documentos',
         publications: 'Publicaciones',
         adminMode: '🔐 Modo Administrador activo',
@@ -28,7 +28,7 @@ const translations = {
         publish: 'Publicar',
         recentPosts: 'Publicaciones Recientes',
         noPosts: 'No hay publicaciones disponibles',
-        copyright: '© 2026 Compresor + nube. Todos los derechos reservados.',
+        copyright: '© 2026 Blog de Icerix. Todos los derechos reservados.',
         delete: 'Eliminar',
         comments: 'Comentarios',
         yourName: 'Tu nombre',
@@ -46,7 +46,7 @@ const translations = {
         back: 'Volver'
     },
     en: {
-        portal: 'Compresor + nube',
+        portal: "Icerix's blog",
         documents: 'Documents',
         publications: 'Publications',
         adminMode: '🔐 Administrator Mode active',
@@ -71,7 +71,7 @@ const translations = {
         publish: 'Publish',
         recentPosts: 'Recent Posts',
         noPosts: 'No posts available',
-        copyright: '© 2026 Compresor + nube. All rights reserved.',
+        copyright: "© 2026 Icerix's blog. All rights reserved.",
         delete: 'Delete',
         comments: 'Comments',
         yourName: 'Your name',
@@ -92,7 +92,7 @@ const translations = {
 
 const PAYPAL_DONATION_URL = 'https://paypal.me/TizianoSavoini';
 
-let currentLang = localStorage.getItem('lang') || 'es';
+let currentLang = localStorage.getItem('lang') || 'en';
 
 function t(key) {
     return translations[currentLang][key] || key;
@@ -1260,11 +1260,18 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
+        const createdAt = Date.now();
+        const otherLang = currentLang === 'es' ? 'en' : 'es';
+        const titleByLang = { [currentLang]: title, [otherLang]: '' };
+        const contentByLang = { [currentLang]: content, [otherLang]: '' };
+
         db.collection('posts').add({
-            id: Date.now(),
+            id: createdAt,
+            createdAt,
             title,
             content,
-            date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US', { day: 'numeric', month: 'long', year: 'numeric' }),
+            titleByLang,
+            contentByLang,
             comments: []
         });
 
@@ -1281,13 +1288,34 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
+        const dateLocale = currentLang === 'es' ? 'es-ES' : 'en-US';
+        const dateOptions = { day: 'numeric', month: 'long', year: 'numeric' };
+        const formatPostDate = (post) => {
+            if (typeof post.createdAt === 'number' && Number.isFinite(post.createdAt)) {
+                return new Date(post.createdAt).toLocaleDateString(dateLocale, dateOptions);
+            }
+            if (typeof post.date === 'string' && post.date.trim()) return post.date;
+            return '';
+        };
+
+        const getLocalizedText = (byLang, fallbackText) => {
+            if (byLang && typeof byLang === 'object') {
+                const candidate = byLang[currentLang];
+                if (typeof candidate === 'string' && candidate.trim()) return candidate;
+                const alt = currentLang === 'es' ? byLang.en : byLang.es;
+                if (typeof alt === 'string' && alt.trim()) return alt;
+            }
+            if (typeof fallbackText === 'string') return fallbackText;
+            return '';
+        };
+
         blogsContainer.innerHTML = blogPosts.map(post => `
             <div class="post-item" id="post-${post.id}">
                 <div class="post-header">
-                    <h3 class="post-title">${escapeHtml(post.title)}</h3>
-                    <span class="post-date">${post.date}</span>
+                    <h3 class="post-title">${escapeHtml(getLocalizedText(post.titleByLang, post.title))}</h3>
+                    <span class="post-date">${escapeHtml(formatPostDate(post))}</span>
                 </div>
-                <p class="post-content">${escapeHtml(post.content)}</p>
+                <p class="post-content">${escapeHtml(getLocalizedText(post.contentByLang, post.content))}</p>
                 ${isAdmin ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${post.firebaseId}')">${t('delete')}</button></div>` : ''}
                 
                 <div class="comments-section">
@@ -1297,7 +1325,7 @@ document.addEventListener('DOMContentLoaded', function () {
                             <div class="comment ${c.isAdmin ? 'comment-admin' : ''}">
                                 <div class="comment-header">
                                     <span class="comment-author">${escapeHtml(c.author)}${c.isAdmin ? ` <span class="admin-badge">${t('admin')}</span>` : ''}</span>
-                                    <span class="comment-date">${c.date}</span>
+                                    <span class="comment-date">${escapeHtml((typeof c.createdAt === 'number' && Number.isFinite(c.createdAt)) ? new Date(c.createdAt).toLocaleDateString(dateLocale) : (c.date || ''))}</span>
                                     ${isAdmin ? `<button class="btn-delete-comment" onclick="deleteComment('${post.firebaseId}', ${idx})">×</button>` : ''}
                                 </div>
                                 <p class="comment-text">${escapeHtml(c.text)}</p>
@@ -1307,7 +1335,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     <div class="comment-form">
                         <input type="text" class="form-control comment-author-input" id="author-${post.id}" placeholder="${t('yourName')}" maxlength="30">
                         <input type="text" class="form-control comment-input" id="comment-${post.id}" placeholder="${t('writeComment')}" onkeypress="handleComment(event, '${post.firebaseId}', ${post.id})">
-                        <button class="btn btn-sm btn-primary" onclick="addComment('${post.firebaseId}', ${post.id})">${t('send')}</button>
+                        <button class="btn btn-sm btn-primary" onclick="addComment('${post.firebaseId}', ${post.id})">${t('comment')}</button>
                     </div>
                 </div>
             </div>
@@ -1334,7 +1362,7 @@ document.addEventListener('DOMContentLoaded', function () {
             comments: firebase.firestore.FieldValue.arrayUnion({
                 author,
                 text,
-                date: new Date().toLocaleDateString(currentLang === 'es' ? 'es-ES' : 'en-US'),
+                createdAt: Date.now(),
                 isAdmin
             })
         });

@@ -342,6 +342,14 @@ body {
     margin-bottom: 0.75rem;
 }
 
+.card-files .card-body {
+    padding-top: 0.75rem;
+}
+
+.card-files .table-container {
+    margin-top: -0.25rem;
+}
+
 .card-header h2 {
     font-size: 1rem;
     font-weight: 600;
