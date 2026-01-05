@@ -1439,9 +1439,9 @@ document.addEventListener('DOMContentLoaded', function () {
         const ensureAuth = async () => {
             if (!firebase.auth) throw new Error('auth-sdk-missing');
             const auth = firebase.auth();
-            if (auth.currentUser) return auth.currentUser;
-            await auth.signInAnonymously();
+            if (!auth.currentUser) await auth.signInAnonymously();
             if (!auth.currentUser) throw new Error('auth-missing');
+            try { await auth.currentUser.getIdToken(true); } catch (e) { }
             return auth.currentUser;
         };
 
