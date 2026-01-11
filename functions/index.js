@@ -27,6 +27,13 @@ function normalizeLang(value) {
   return "en";
 }
 
+function unwrapCallablePayload(value) {
+  if (!value || typeof value !== "object") return value;
+  const inner = value.data;
+  if (inner && typeof inner === "object") return inner;
+  return value;
+}
+
 async function translateText(text, source, target) {
   const src = normalizeLang(source);
   const tgt = normalizeLang(target);
@@ -36,9 +43,6 @@ async function translateText(text, source, target) {
   if (typeof fetch !== "function") return "";
 
   const key =
-    (functions.config() &&
-      functions.config().translate &&
-      functions.config().translate.key) ||
     process.env.TRANSLATE_API_KEY ||
     process.env.GOOGLE_TRANSLATE_API_KEY ||
     "";
@@ -77,11 +81,35 @@ async function translateText(text, source, target) {
 }
 
 exports.addComment = functions.https.onCall(async (data, context) => {
-  const postId = clampLen(data && data.postId, 128);
-  const text = clampLen(data && data.text, 800);
-  const author = clampLen(data && data.author, 30);
-  const lang = normalizeLang(data && data.lang);
-  const isAdmin = !!(data && data.isAdmin);
+  const payload = unwrapCallablePayload(data);
+
+  const postIdDirect = clampLen(
+      payload &&
+      (payload.postId ||
+        payload.firebaseId ||
+        payload.docId ||
+        payload.postDocId),
+      128,
+  );
+  const rawLegacyId =
+    payload && (payload.id || payload.postNumericId || payload.postLegacyId);
+  let legacyId = null;
+  if (typeof rawLegacyId === "number" && Number.isFinite(rawLegacyId)) {
+    legacyId = rawLegacyId;
+  }
+  let postId = postIdDirect;
+  if (!postId && legacyId !== null) {
+    const snap = await admin.firestore()
+        .collection("posts")
+        .where("id", "==", legacyId)
+        .limit(1)
+        .get();
+    if (!snap.empty) postId = snap.docs[0].id;
+  }
+  const text = clampLen(payload && payload.text, 800);
+  const author = clampLen(payload && payload.author, 30);
+  const lang = normalizeLang(payload && payload.lang);
+  const isAdmin = !!(payload && payload.isAdmin);
 
   if (!postId) {
     throw new functions.https.HttpsError(
@@ -127,6 +155,103 @@ exports.addComment = functions.https.onCall(async (data, context) => {
   });
 
   return {ok: true, comment};
+});
+
+exports.addCommentProxy = functions.https.onRequest(async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.status(204).send("");
+    return;
+  }
+
+  if (req.method !== "POST") {
+    res.status(405).json({ok: false, error: "Method not allowed"});
+    return;
+  }
+
+  let body = req.body;
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      body = null;
+    }
+  }
+
+  const payload = unwrapCallablePayload(body);
+
+  const postIdDirect = clampLen(
+      payload &&
+      (payload.postId ||
+        payload.firebaseId ||
+        payload.docId ||
+        payload.postDocId),
+      128,
+  );
+  const rawLegacyId =
+    payload && (payload.id || payload.postNumericId || payload.postLegacyId);
+  let legacyId = null;
+  if (typeof rawLegacyId === "number" && Number.isFinite(rawLegacyId)) {
+    legacyId = rawLegacyId;
+  }
+  let postId = postIdDirect;
+  if (!postId && legacyId !== null) {
+    const snap = await admin.firestore()
+        .collection("posts")
+        .where("id", "==", legacyId)
+        .limit(1)
+        .get();
+    if (!snap.empty) postId = snap.docs[0].id;
+  }
+
+  const text = clampLen(payload && payload.text, 800);
+  const author = clampLen(payload && payload.author, 30);
+  const lang = normalizeLang(payload && payload.lang);
+  const isAdmin = !!(payload && payload.isAdmin);
+
+  if (!postId) {
+    res.status(400).json({ok: false, error: "Missing postId"});
+    return;
+  }
+  if (!text) {
+    res.status(400).json({ok: false, error: "Missing text"});
+    return;
+  }
+
+  const uid = "";
+  const createdAt = Date.now();
+  const commentId = `${createdAt}_${uid}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+  const otherLang = lang === "es" ? "en" : "es";
+  const translated = await translateText(text, lang, otherLang);
+  const textByLang = {
+    [lang]: text,
+    [otherLang]: translated || "",
+  };
+
+  const comment = {
+    id: commentId,
+    uid: null,
+    author: author || "Anonymous",
+    text,
+    lang,
+    createdAt,
+    isAdmin,
+    textByLang,
+  };
+
+  const postRef = admin.firestore().collection("posts").doc(postId);
+  await postRef.set(
+      {comments: admin.firestore.FieldValue.arrayUnion(comment)},
+      {merge: true},
+  );
+
+  res.status(200).json({ok: true, comment});
 });
 
 exports.downloadProxy = functions.https.onRequest(async (req, res) => {

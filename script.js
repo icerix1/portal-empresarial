@@ -414,6 +414,18 @@ document.addEventListener('DOMContentLoaded', function () {
         appId: "1:1075076139650:web:0ded5b31cecf72b10f429b",
         measurementId: "G-PRTN16Q3SM"
     };
+    const RUST_API_BASE_URL = (() => {
+        try {
+            const v = localStorage.getItem('RUST_API_BASE_URL');
+            if (v && String(v).trim()) return String(v).trim();
+        } catch (e) { }
+        const meta = document.querySelector('meta[name="rust-api-base-url"]');
+        const content = meta ? meta.getAttribute('content') : '';
+        if (content && String(content).trim()) return String(content).trim();
+        const w = typeof window.RUST_API_BASE_URL === 'string' ? window.RUST_API_BASE_URL.trim() : '';
+        if (w) return w;
+        return '';
+    })();
 
     // Initialize Firebase
     let db, storage;
@@ -1139,7 +1151,12 @@ document.addEventListener('DOMContentLoaded', function () {
                     bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
                     if (!bucketName) throw new Error('Missing bucket for download');
 
-                    proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+                    const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+                    if (rustBase) {
+                        proxyUrl = `${rustBase.replace(/\\/+$/, '')}/v1/download?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+                    } else {
+                        proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+                    }
 
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 120000);
@@ -1315,11 +1332,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             blogPosts.forEach((post) => {
-                const authorEl = document.getElementById(`author-${post.id}`);
-                const commentEl = document.getElementById(`comment-${post.id}`);
+                const postDocId = typeof post.firebaseId === 'string' ? post.firebaseId.trim() : '';
+                const postKey = postDocId || String(post.id || post.createdAt || '');
+                const authorEl = document.getElementById(`author-${postKey}`);
+                const commentEl = document.getElementById(`comment-${postKey}`);
                 if (!authorEl && !commentEl) return;
-                const existing = blogDraftsByPostId.get(post.id) || {};
-                blogDraftsByPostId.set(post.id, {
+                const existing = blogDraftsByPostId.get(postKey) || {};
+                blogDraftsByPostId.set(postKey, {
                     author: authorEl ? authorEl.value : existing.author || '',
                     comment: commentEl ? commentEl.value : existing.comment || ''
                 });
@@ -1368,14 +1387,18 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         };
 
-        blogsContainer.innerHTML = blogPosts.map(post => `
-            <div class="post-item" id="post-${post.id}">
+        blogsContainer.innerHTML = blogPosts.map((post) => {
+            const postDocId = typeof post.firebaseId === 'string' ? post.firebaseId.trim() : '';
+            const postKey = postDocId || String(post.id || post.createdAt || '');
+            const canComment = !!postDocId;
+            return `
+            <div class="post-item" id="post-${escapeHtml(postKey)}">
                 <div class="post-header">
                     <h3 class="post-title">${escapeHtml(getPostLocalizedText(post, 'titleByLang'))}</h3>
                     <span class="post-date">${escapeHtml(formatPostDate(post))}</span>
                 </div>
                 <p class="post-content">${escapeHtml(getPostLocalizedText(post, 'contentByLang'))}</p>
-                ${isAdmin ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${post.firebaseId}')">${t('delete')}</button></div>` : ''}
+                ${isAdmin && postDocId ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${postDocId}')">${t('delete')}</button></div>` : ''}
                 
                 <div class="comments-section">
                     <h4 class="comments-title">💬 ${t('comments')} (${post.comments ? post.comments.length : 0})</h4>
@@ -1385,71 +1408,103 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <div class="comment-header">
                                     <span class="comment-author">${escapeHtml(c.author)}${c.isAdmin ? ` <span class="admin-badge">${t('admin')}</span>` : ''}</span>
                                     <span class="comment-date">${escapeHtml((typeof c.createdAt === 'number' && Number.isFinite(c.createdAt)) ? new Date(c.createdAt).toLocaleDateString(dateLocale) : (c.date || ''))}</span>
-                                    ${isAdmin ? `<button class="btn-delete-comment" onclick="deleteComment('${post.firebaseId}', ${idx})">×</button>` : ''}
+                                    ${isAdmin && postDocId ? `<button class="btn-delete-comment" onclick="deleteComment('${postDocId}', ${idx})">×</button>` : ''}
                                 </div>
                                 <p class="comment-text">${escapeHtml(getCommentLocalizedText(c))}</p>
                             </div>
                         `).join('')}
                     </div>
                     <div class="comment-form">
-                        <input type="text" class="form-control comment-author-input" id="author-${post.id}" placeholder="${t('yourName')}" maxlength="30">
-                        <input type="text" class="form-control comment-input" id="comment-${post.id}" placeholder="${t('writeComment')}" onkeypress="handleComment(event, '${post.firebaseId}', ${post.id})">
-                        <button class="btn btn-sm btn-primary" onclick="addComment('${post.firebaseId}', ${post.id})">${t('comment')}</button>
+                        <input type="text" class="form-control comment-author-input" id="author-${escapeHtml(postKey)}" placeholder="${t('yourName')}" maxlength="30">
+                        <input type="text" class="form-control comment-input" id="comment-${escapeHtml(postKey)}" placeholder="${t('writeComment')}" ${canComment ? `onkeypress="handleComment(event, '${postDocId}')"` : 'disabled'}>
+                        <button class="btn btn-sm btn-primary" ${canComment ? `onclick="addComment('${postDocId}')"` : 'disabled'}>${t('comment')}</button>
                     </div>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
 
         try {
             blogPosts.forEach((post) => {
-                const draft = blogDraftsByPostId.get(post.id) || { author: '', comment: '' };
-                const authorEl = document.getElementById(`author-${post.id}`);
-                const commentEl = document.getElementById(`comment-${post.id}`);
+                const postDocId = typeof post.firebaseId === 'string' ? post.firebaseId.trim() : '';
+                const postKey = postDocId || String(post.id || post.createdAt || '');
+                const draft = blogDraftsByPostId.get(postKey) || { author: '', comment: '' };
+                const authorEl = document.getElementById(`author-${postKey}`);
+                const commentEl = document.getElementById(`comment-${postKey}`);
                 if (authorEl) {
                     authorEl.value = draft.author || '';
                     authorEl.oninput = () => {
-                        const cur = blogDraftsByPostId.get(post.id) || {};
-                        blogDraftsByPostId.set(post.id, { ...cur, author: authorEl.value });
+                        const cur = blogDraftsByPostId.get(postKey) || {};
+                        blogDraftsByPostId.set(postKey, { ...cur, author: authorEl.value });
                     };
                 }
                 if (commentEl) {
                     commentEl.value = draft.comment || '';
                     commentEl.oninput = () => {
-                        const cur = blogDraftsByPostId.get(post.id) || {};
-                        blogDraftsByPostId.set(post.id, { ...cur, comment: commentEl.value });
+                        const cur = blogDraftsByPostId.get(postKey) || {};
+                        blogDraftsByPostId.set(postKey, { ...cur, comment: commentEl.value });
                     };
                 }
             });
         } catch (e) { }
     };
 
-    window.handleComment = function (e, firebaseId, postId) {
-        if (e.key === 'Enter') addComment(firebaseId, postId);
+    window.handleComment = function (e, a, b) {
+        if (e.key === 'Enter') addComment(a, b);
     };
 
-    window.addComment = function (firebaseId, postId) {
-        const authorInput = document.getElementById(`author-${postId}`);
-        const input = document.getElementById(`comment-${postId}`);
-        const text = input ? input.value.trim() : '';
-        let author = authorInput.value.trim();
+    window.addComment = function (a, b) {
+        const tryResolveDocId = (x, y) => {
+            const s1 = typeof x === 'string' ? x.trim() : '';
+            if (s1) return { docId: s1, legacyKey: null };
 
-        if (!author) author = t('anonymous');
-        if (!text) { alert(t('writeCommentAlert')); return; }
+            const s2 = typeof y === 'string' ? y.trim() : '';
+            if (s2) return { docId: s2, legacyKey: null };
 
-        let postDocId = typeof firebaseId === 'string' ? firebaseId.trim() : '';
-        if (!postDocId) {
+            const n1 = typeof x === 'number' && Number.isFinite(x) ? x : null;
+            const n2 = typeof y === 'number' && Number.isFinite(y) ? y : null;
+            const legacy = n1 !== null ? n1 : n2;
+            if (legacy === null) return { docId: '', legacyKey: null };
+
             const match = (Array.isArray(blogPosts) ? blogPosts : []).find((p) => {
                 if (!p) return false;
-                const sameId = p.id === postId || p.createdAt === postId;
-                if (!sameId) return false;
-                return typeof p.firebaseId === 'string' && p.firebaseId.trim();
+                return p.id === legacy || p.createdAt === legacy;
             });
-            if (match) postDocId = match.firebaseId.trim();
+            const docId =
+                match && typeof match.firebaseId === 'string' ? match.firebaseId.trim() : '';
+            return { docId, legacyKey: legacy };
+        };
+
+        const resolved = tryResolveDocId(a, b);
+        const postId = resolved.docId;
+        const postKeyCandidates = [];
+        if (postId) postKeyCandidates.push(postId);
+        if (resolved.legacyKey !== null) postKeyCandidates.push(String(resolved.legacyKey));
+
+        let authorInput = null;
+        let input = null;
+        let usedKey = '';
+        for (const k of postKeyCandidates) {
+            const aEl = document.getElementById(`author-${k}`);
+            const cEl = document.getElementById(`comment-${k}`);
+            if (aEl || cEl) {
+                authorInput = aEl;
+                input = cEl;
+                usedKey = k;
+                break;
+            }
         }
-        if (!postDocId) {
+
+        if (!postId) {
             alert('No se pudo identificar la publicación. Recargá la página.');
             return;
         }
+
+        const text = input ? input.value.trim() : '';
+        let author = authorInput ? authorInput.value.trim() : '';
+
+        if (!author) author = t('anonymous');
+        if (!text) { alert(t('writeCommentAlert')); return; }
 
         const ensureAuth = async () => {
             if (!firebase.auth) throw new Error('auth-sdk-missing');
@@ -1471,24 +1526,112 @@ document.addEventListener('DOMContentLoaded', function () {
             return 'No se pudo autenticar. Revisá Firebase Auth (Anonymous) y dominios autorizados.';
         };
 
-        ensureAuth().then(() => {
+        const legacyId = (() => {
+            if (resolved.legacyKey !== null) return resolved.legacyKey;
+            const p = (Array.isArray(blogPosts) ? blogPosts : []).find((x) => {
+                if (!x) return false;
+                return typeof x.firebaseId === 'string' && x.firebaseId.trim() === postId;
+            });
+            const n = p && (p.id ?? p.createdAt);
+            return (typeof n === 'number' && Number.isFinite(n)) ? n : null;
+        })();
+
+        const callViaRust = async () => {
+            if (typeof fetch !== 'function') throw new Error('fetch-missing');
+            const base = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+            if (!base) throw new Error('rust-base-missing');
+            const url = `${base.replace(/\\/+$/, '')}/v1/comments`;
+            let token = '';
+            try {
+                const auth = firebase && firebase.auth ? firebase.auth() : null;
+                const user = auth && auth.currentUser ? auth.currentUser : null;
+                if (user && user.getIdToken) token = String(await user.getIdToken());
+            } catch (e) { }
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers.Authorization = `Bearer ${token}`;
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    postId,
+                    id: legacyId,
+                    author,
+                    text,
+                    lang: currentLang,
+                    isAdmin
+                })
+            });
+            const json = await resp.json().catch(() => null);
+            if (!resp.ok || !json || !json.ok) {
+                const msg = json && (json.error || json.message) ? String(json.error || json.message) : `HTTP ${resp.status}`;
+                const err = new Error(msg);
+                err.code = 'rust-failed';
+                throw err;
+            }
+            try { console.info('[comments] guardado via rust backend'); } catch (e) { }
+            return json;
+        };
+
+        const callViaProxy = async () => {
+            if (typeof fetch !== 'function') throw new Error('fetch-missing');
+            const base = `https://us-central1-${config.projectId}.cloudfunctions.net`;
+            const url = `${base}/addCommentProxy`;
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    postId,
+                    id: legacyId,
+                    author,
+                    text,
+                    lang: currentLang,
+                    isAdmin
+                })
+            });
+            const json = await resp.json().catch(() => null);
+            if (!resp.ok || !json || !json.ok) {
+                const msg = json && (json.error || json.message) ? String(json.error || json.message) : `HTTP ${resp.status}`;
+                const err = new Error(msg);
+                err.code = 'proxy-failed';
+                throw err;
+            }
+            try { console.info('[comments] guardado via firebase functions proxy'); } catch (e) { }
+            return json;
+        };
+
+        const callViaCallable = async () => {
+            await ensureAuth();
             if (!firebase.functions) throw new Error('functions-sdk-missing');
             const app = firebase.app ? firebase.app() : null;
             const fns = app && app.functions ? app.functions('us-central1') : firebase.functions();
             const addCommentFn = fns.httpsCallable('addComment');
-            return addCommentFn({
-                postId: postDocId,
+            const result = await addCommentFn({
+                postId,
+                id: legacyId,
                 author,
                 text,
                 lang: currentLang,
                 isAdmin
             });
-        }).then(() => {
+            try { console.info('[comments] guardado via firebase functions callable'); } catch (e) { }
+            return result;
+        };
+
+        Promise.resolve()
+            .then(callViaRust)
+            .catch(callViaProxy)
+            .catch(callViaCallable)
+            .then(() => {
             if (input) input.value = '';
-            const cur = blogDraftsByPostId.get(postId) || {};
-            blogDraftsByPostId.set(postId, { ...cur, comment: '' });
+            const keyForDraft = usedKey || postId;
+            const cur = blogDraftsByPostId.get(keyForDraft) || {};
+            blogDraftsByPostId.set(keyForDraft, { ...cur, comment: '' });
         }).catch((error) => {
             console.error('Error adding comment:', error);
+            if (error && String(error.code || '').includes('rust-failed')) {
+                alert('No se pudo guardar el comentario (Rust backend).');
+                return;
+            }
             if (error && String(error.code || '').includes('unauthenticated')) {
                 alert(friendlyAuthError(error));
                 return;
