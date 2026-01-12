@@ -1040,7 +1040,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             const actionBtn = item.type === 'folder'
                 ? `<button class="btn-action btn-action-primary" onclick="downloadFolder('${item.id}')" type="button">${downloadLabel}</button>`
-                : `<a href="${downloadHref}" target="_blank" rel="noopener noreferrer" class="btn-action btn-action-primary" download>${downloadLabel}</a>`;
+                : `<button class="btn-action btn-action-primary" onclick="downloadFile('${item.id}')" type="button">${downloadLabel}</button>`;
 
             return `
             <tr>
@@ -1156,69 +1156,44 @@ document.addEventListener('DOMContentLoaded', function () {
         if (sub && typeof text === 'string') sub.textContent = text;
     }
 
-    function ensureFolderLinksOverlay() {
-        let overlay = document.getElementById('folderLinksOverlay');
-        if (overlay) return overlay;
-
-        overlay = document.createElement('div');
-        overlay.id = 'folderLinksOverlay';
-        overlay.className = 'zip-overlay hidden';
-        overlay.innerHTML = `
-            <div class="zip-overlay-card">
-                <div class="zip-overlay-title" id="folderLinksTitle">Descargar carpeta</div>
-                <div class="zip-overlay-sub" id="folderLinksSub">Seleccioná archivos para descargar.</div>
-                <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
-                    <button class="btn-action" id="folderLinksClose" type="button">Cerrar</button>
-                </div>
-                <div id="folderLinksList" style="margin-top:12px; max-height:55vh; overflow:auto; text-align:left;"></div>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-
-        const closeBtn = overlay.querySelector('#folderLinksClose');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => overlay.classList.add('hidden'));
-        }
-
-        overlay.addEventListener('click', (e) => {
-            if (e && e.target === overlay) overlay.classList.add('hidden');
-        });
-
-        return overlay;
+    function triggerDirectDownload(href, filename) {
+        if (!href) return;
+        const a = document.createElement('a');
+        a.href = href;
+        if (filename) a.download = filename;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        try {
+            a.click();
+        } catch (e) { }
+        setTimeout(() => {
+            try { document.body.removeChild(a); } catch (e) { }
+        }, 2000);
     }
 
-    function showFolderLinksOverlay(folderName, items) {
-        const overlay = ensureFolderLinksOverlay();
-        const title = overlay.querySelector('#folderLinksTitle');
-        const sub = overlay.querySelector('#folderLinksSub');
-        const list = overlay.querySelector('#folderLinksList');
+    window.downloadFile = function (fileId) {
+        const item = (Array.isArray(currentFolderItems) ? currentFolderItems : []).find((x) => x && x.id === fileId);
+        if (!item || item.type !== 'file') return;
 
-        if (title) title.textContent = `Descargar: ${String(folderName || 'carpeta')}`;
-        if (sub) sub.textContent = `Archivos: ${items.length}`;
+        const rustBase = RUST_DOWNLOADS_ENABLED && typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+        const bucketDefault = (firebase.app && firebase.app().options && firebase.app().options.storageBucket)
+            ? firebase.app().options.storageBucket
+            : '';
+        const rustDownloadBase = rustBase ? rustBase.replace(/\/+$/, '') + '/v1/download' : '';
 
-        if (list) {
-            list.innerHTML = items.map((item) => {
-                const href = item && item.url ? String(item.url) : '';
-                const rel = item && item.relativePath ? String(item.relativePath) : '';
-                const name = item && item.name ? String(item.name) : 'archivo';
-                if (!href) {
-                    return `<div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.12);">
-                        <div>${escapeHtml(name)}</div>
-                        <div style="opacity:0.8; font-size:12px;">${escapeHtml(rel)}</div>
-                        <div style="opacity:0.8; font-size:12px;">(sin URL de descarga)</div>
-                    </div>`;
-                }
-                return `<div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.12);">
-                    <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" download style="color:inherit; text-decoration:underline;">
-                        ${escapeHtml(name)}
-                    </a>
-                    <div style="opacity:0.8; font-size:12px;">${escapeHtml(rel)}</div>
-                </div>`;
-            }).join('');
+        let href = item && item.url ? String(item.url) : '';
+        if (rustDownloadBase) {
+            const storagePath = item.storagePath || getStoragePathFromDownloadUrl(href);
+            const bucketName = item.bucket || getBucketFromDownloadUrl(href) || bucketDefault;
+            if (storagePath && bucketName) {
+                href = `${rustDownloadBase}?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+            }
         }
 
-        overlay.classList.remove('hidden');
-    }
+        triggerDirectDownload(href, item.name);
+    };
 
     window.downloadFolder = async function (folderId, folderName) {
         if (!db) return;
@@ -1228,42 +1203,64 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!folder || folder.type !== 'folder') return;
 
         const folderFullPath = [...folder.path, folder.name];
+        const folderKey = makePathKey(folderFullPath);
+        if (!folderKey) return;
 
-        const items = [];
-        const pendingFolders = [folderFullPath];
-        const visited = new Set();
+        const files = [];
 
-        while (pendingFolders.length) {
-            const p = pendingFolders.shift();
-            const key = makePathKey(p);
-            if (visited.has(key)) continue;
-            visited.add(key);
+        const directSnap = await db.collection('files')
+            .where('pathKey', '==', folderKey)
+            .get();
+        directSnap.forEach((doc) => {
+            const data = doc.data() || {};
+            if (data.type !== 'file' || !data.url) return;
+            const relativeParts = (data.path || []).slice(folderFullPath.length);
+            const relativePath = [...relativeParts, data.name].join('/');
+            files.push({ name: data.name, url: data.url || '', relativePath });
+        });
 
-            const snap = await db.collection('files').where('path', '==', p).get();
+        const startKey = folderKey + '\u0001';
+        const endKey = startKey + '\uf8ff';
+        let lastDoc = null;
+        while (true) {
+            let q = db.collection('files')
+                .where('pathKey', '>=', startKey)
+                .where('pathKey', '<', endKey)
+                .orderBy('pathKey')
+                .limit(1000);
+            if (lastDoc) q = q.startAfter(lastDoc);
+            const snap = await q.get();
+            if (snap.empty) break;
             snap.forEach((doc) => {
                 const data = doc.data() || {};
-                if (data.type === 'file') items.push({ id: doc.id, ...data });
-                else if (data.type === 'folder' && data.name) pendingFolders.push([...p, data.name]);
+                if (data.type !== 'file' || !data.url) return;
+                const relativeParts = (data.path || []).slice(folderFullPath.length);
+                const relativePath = [...relativeParts, data.name].join('/');
+                files.push({ name: data.name, url: data.url || '', relativePath });
             });
+            lastDoc = snap.docs[snap.docs.length - 1];
         }
 
-        console.log('Items to download:', items);
+        files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 
-        if (items.length === 0) {
+        if (!files.length) {
             alert('La carpeta está vacía');
             return;
         }
 
-        const listItems = items
-            .filter((f) => f && f.type === 'file')
-            .map((f) => {
-                const relativeParts = (f.path || []).slice(folderFullPath.length);
-                const relativePath = [...relativeParts, f.name].join('/');
-                return { name: f.name, url: f.url || '', relativePath };
-            })
-            .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+        const total = files.length;
+        let completed = 0;
+        setZipOverlay(true, 0, `0/${total}`);
 
-        showFolderLinksOverlay(folder.name, listItems);
+        for (const f of files) {
+            completed += 1;
+            const pct = (completed / total) * 100;
+            setZipOverlay(true, pct, `${completed}/${total}`);
+            triggerDirectDownload(f.url, f.name);
+            await new Promise(r => setTimeout(r, 120));
+        }
+
+        setTimeout(() => setZipOverlay(false, 100, ''), 1500);
     };
 
     // --- Admin Actions ---
