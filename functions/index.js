@@ -40,6 +40,22 @@ function bucketCandidates(bucketName, fallback) {
   return list;
 }
 
+async function findExistingFile(storagePath, bucketName) {
+  const candidates = bucketCandidates(bucketName, defaultBucket.name);
+  for (const b of candidates) {
+    if (!b) continue;
+    const ref = storage.bucket(b).file(storagePath);
+    try {
+      const existsArr = await ref.exists();
+      const exists = Array.isArray(existsArr) ? existsArr[0] : false;
+      if (exists) return ref;
+    } catch (e) {
+      void e;
+    }
+  }
+  return null;
+}
+
 function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -284,165 +300,188 @@ exports.addCommentProxy = functions.https.onRequest(async (req, res) => {
   res.status(200).json({ok: true, comment});
 });
 
-exports.zipFolder = functions.https.onRequest(async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+exports.zipFolder = functions.https.onRequest(
+    {timeoutSeconds: 540, memory: "1GiB"},
+    async (req, res) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    res.status(204).send("");
-    return;
-  }
-
-  if (req.method !== "GET") {
-    res.status(405).json({ok: false, error: "Method not allowed"});
-    return;
-  }
-
-  try {
-    const folderId = normalizeString(req.query && req.query.folderId);
-    if (!folderId) {
-      res.status(400).json({ok: false, error: "Missing folderId"});
-      return;
-    }
-
-    const folderSnap = await admin.firestore()
-        .collection("files")
-        .doc(folderId)
-        .get();
-    if (!folderSnap.exists) {
-      res.status(404).json({ok: false, error: "Folder not found"});
-      return;
-    }
-    const folder = folderSnap.data() || {};
-    if (folder.type !== "folder") {
-      res.status(400).json({ok: false, error: "Not a folder"});
-      return;
-    }
-
-    const folderName = clampLen(folder.name || "carpeta", 120) || "carpeta";
-    const folderPath = Array.isArray(folder.path) ? folder.path : [];
-    const folderFullPath = [...folderPath, folderName];
-    const folderKey = makePathKey(folderFullPath);
-    if (!folderKey) {
-      res.status(400).json({ok: false, error: "Invalid folder path"});
-      return;
-    }
-
-    const fileDocs = [];
-
-    const directSnap = await admin.firestore()
-        .collection("files")
-        .where("pathKey", "==", folderKey)
-        .get();
-    directSnap.forEach((doc) => {
-      const data = doc.data() || {};
-      if (data.type !== "file") return;
-      fileDocs.push({id: doc.id, ...data});
-    });
-
-    const startKey = folderKey + "\u0001";
-    const endKey = startKey + "\uf8ff";
-    let lastDoc = null;
-    let done = false;
-    while (!done) {
-      let q = admin.firestore()
-          .collection("files")
-          .where("pathKey", ">=", startKey)
-          .where("pathKey", "<", endKey)
-          .orderBy("pathKey")
-          .limit(1000);
-      if (lastDoc) q = q.startAfter(lastDoc);
-      const snap = await q.get();
-      if (snap.empty) {
-        done = true;
-        break;
+      if (req.method === "OPTIONS") {
+        res.status(204).send("");
+        return;
       }
-      snap.forEach((doc) => {
-        const data = doc.data() || {};
-        if (data.type !== "file") return;
-        fileDocs.push({id: doc.id, ...data});
-      });
-      lastDoc = snap.docs[snap.docs.length - 1];
-    }
 
-    const files = fileDocs
-        .filter((f) =>
-          f &&
+      if (req.method !== "GET") {
+        res.status(405).json({ok: false, error: "Method not allowed"});
+        return;
+      }
+
+      try {
+        const folderId = normalizeString(req.query && req.query.folderId);
+        if (!folderId) {
+          res.status(400).json({ok: false, error: "Missing folderId"});
+          return;
+        }
+
+        const folderSnap = await admin.firestore()
+            .collection("files")
+            .doc(folderId)
+            .get();
+        if (!folderSnap.exists) {
+          res.status(404).json({ok: false, error: "Folder not found"});
+          return;
+        }
+        const folder = folderSnap.data() || {};
+        if (folder.type !== "folder") {
+          res.status(400).json({ok: false, error: "Not a folder"});
+          return;
+        }
+
+        const folderName = clampLen(folder.name || "carpeta", 120) || "carpeta";
+        const folderPath = Array.isArray(folder.path) ? folder.path : [];
+        const folderFullPath = [...folderPath, folderName];
+        const folderKey = makePathKey(folderFullPath);
+        if (!folderKey) {
+          res.status(400).json({ok: false, error: "Invalid folder path"});
+          return;
+        }
+
+        const fileDocs = [];
+
+        const queryByPathKey = async () => {
+          const directSnap = await admin.firestore()
+              .collection("files")
+              .where("pathKey", "==", folderKey)
+              .get();
+          directSnap.forEach((doc) => {
+            const data = doc.data() || {};
+            if (data.type !== "file") return;
+            fileDocs.push({id: doc.id, ...data});
+          });
+
+          const startKey = folderKey + "\u0001";
+          const endKey = startKey + "\uf8ff";
+          let lastDoc = null;
+          let done = false;
+          while (!done) {
+            let q = admin.firestore()
+                .collection("files")
+                .where("pathKey", ">=", startKey)
+                .where("pathKey", "<", endKey)
+                .orderBy("pathKey")
+                .limit(1000);
+            if (lastDoc) q = q.startAfter(lastDoc);
+            const snap = await q.get();
+            if (snap.empty) {
+              done = true;
+              break;
+            }
+            snap.forEach((doc) => {
+              const data = doc.data() || {};
+              if (data.type !== "file") return;
+              fileDocs.push({id: doc.id, ...data});
+            });
+            lastDoc = snap.docs[snap.docs.length - 1];
+          }
+        };
+
+        const queryByPathBfs = async () => {
+          const pending = [folderFullPath];
+          const visited = new Set();
+          while (pending.length) {
+            const p = pending.shift();
+            const key = makePathKey(p);
+            if (visited.has(key)) continue;
+            visited.add(key);
+
+            const snap = await admin.firestore()
+                .collection("files")
+                .where("path", "==", p)
+                .get();
+            snap.forEach((doc) => {
+              const data = doc.data() || {};
+              if (data.type === "file") fileDocs.push({id: doc.id, ...data});
+              if (data.type === "folder" && data.name) {
+                pending.push([...p, String(data.name)]);
+              }
+            });
+          }
+        };
+
+        await queryByPathKey();
+        if (!fileDocs.length) await queryByPathBfs();
+
+        const files = fileDocs
+            .filter((f) =>
+              f &&
           f.type === "file" &&
           (f.storagePath || f.url) &&
           f.name,
-        )
-        .map((f) => {
-          const pathArray = Array.isArray(f.path) ? f.path : [];
-          const relativeParts = pathArray.slice(folderFullPath.length);
-          const relativePath = [...relativeParts, String(f.name)]
-              .join("/")
-              .replace(/\\/g, "/");
-          const storagePath =
+            )
+            .map((f) => {
+              const pathArray = Array.isArray(f.path) ? f.path : [];
+              const relativeParts = pathArray.slice(folderFullPath.length);
+              const relativePath = [...relativeParts, String(f.name)]
+                  .join("/")
+                  .replace(/\\/g, "/");
+              const storagePath =
             normalizeString(f.storagePath) || storagePathFromDownloadUrl(f.url);
-          const bucketName = normalizeString(f.bucket);
-          return {relativePath, storagePath, bucketName};
-        })
-        .filter((f) => f.storagePath && f.relativePath)
-        .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+              const bucketName = normalizeString(f.bucket);
+              return {relativePath, storagePath, bucketName};
+            })
+            .filter((f) => f.storagePath && f.relativePath)
+            .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 
-    if (!files.length) {
-      res.status(404).json({ok: false, error: "Empty folder"});
-      return;
-    }
+        if (!files.length) {
+          res.status(404).json({ok: false, error: "Empty folder"});
+          return;
+        }
 
-    const zipName = folderName.toLowerCase().endsWith(".zip") ?
+        const zipName = folderName.toLowerCase().endsWith(".zip") ?
       folderName :
       `${folderName}.zip`;
 
-    res.status(200);
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${zipName.replace(/"/g, "_")}"`,
-    );
-    res.setHeader("Cache-Control", "no-store");
+        res.status(200);
+        res.setHeader("Content-Type", "application/zip");
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${zipName.replace(/"/g, "_")}"`,
+        );
+        res.setHeader("Cache-Control", "no-store");
 
-    const archive = archiver("zip", {store: true});
-    archive.on("error", (err) => {
-      try {
-        res
-            .status(500)
-            .end(String(err && err.message ? err.message : "zip error"));
-      } catch (e) {
-        res.end();
-      }
-    });
-    archive.pipe(res);
+        const archive = archiver("zip", {store: true});
+        archive.on("error", (err) => {
+          try {
+            res
+                .status(500)
+                .end(String(err && err.message ? err.message : "zip error"));
+          } catch (e) {
+            res.end();
+          }
+        });
+        archive.pipe(res);
 
-    for (const f of files) {
-      const candidates = bucketCandidates(f.bucketName, defaultBucket.name);
-      let appended = false;
-      for (const b of candidates) {
-        if (!b) continue;
-        try {
-          const fileRef = storage.bucket(b).file(f.storagePath);
-          archive.append(fileRef.createReadStream(), {name: f.relativePath});
-          appended = true;
-          break;
-        } catch (e) {
-          void e;
+        for (const f of files) {
+          const ref = await findExistingFile(f.storagePath, f.bucketName);
+          if (ref) {
+            const stream = ref.createReadStream();
+            stream.on("error", (e) => archive.emit("error", e));
+            archive.append(stream, {name: f.relativePath});
+          } else {
+            archive.append(Buffer.from(""), {name: f.relativePath});
+          }
         }
-      }
-      if (!appended) {
-        archive.append(Buffer.from(""), {name: f.relativePath});
-      }
-    }
 
-    await archive.finalize();
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: String(error && error.message ? error.message : error),
-    });
-  }
-});
+        await archive.finalize();
+      } catch (error) {
+        res.status(500).json({
+          ok: false,
+          error: String(error && error.message ? error.message : error),
+        });
+      }
+    },
+);
 
 exports.downloadProxy = functions.https.onRequest(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
