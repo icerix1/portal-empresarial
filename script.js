@@ -456,6 +456,8 @@ document.addEventListener('DOMContentLoaded', function () {
     let currentFolderItems = [];
     let folderSizeBytesByFullPathKey = new Map();
     let folderSizeInFlightByFullPathKey = new Map();
+    let folderSizeComputeQueue = [];
+    let folderSizeComputeActive = 0;
     let blogPosts = [];
     let blogDraftsByPostId = new Map();
     let listenersStarted = false;
@@ -498,27 +500,61 @@ document.addEventListener('DOMContentLoaded', function () {
 
     async function computeFolderSizeBytes(folderFullPathArray) {
         if (!db) return 0;
-        const queue = [folderFullPathArray];
-        const visited = new Set();
+        const folderKey = makePathKey(folderFullPathArray);
+        if (!folderKey) return 0;
         let total = 0;
 
-        while (queue.length) {
-            const p = queue.shift();
-            const key = makePathKey(p);
-            if (visited.has(key)) continue;
-            visited.add(key);
+        const directSnap = await db.collection('files').where('pathKey', '==', folderKey).get();
+        directSnap.forEach((doc) => {
+            const data = doc.data() || {};
+            if (data.type === 'file' && typeof data.rawSize === 'number' && data.rawSize > 0) total += data.rawSize;
+        });
 
-            const snap = await db.collection('files').where('path', '==', p).get();
+        const startKey = folderKey + '\u0001';
+        const endKey = startKey + '\uf8ff';
+        let lastDoc = null;
+        while (true) {
+            let q = db.collection('files')
+                .where('pathKey', '>=', startKey)
+                .where('pathKey', '<', endKey)
+                .orderBy('pathKey')
+                .limit(1000);
+            if (lastDoc) q = q.startAfter(lastDoc);
+            const snap = await q.get();
+            if (snap.empty) break;
+
             snap.forEach((doc) => {
                 const data = doc.data() || {};
-                if (data.type === 'file') {
-                    if (typeof data.rawSize === 'number' && data.rawSize > 0) total += data.rawSize;
-                } else if (data.type === 'folder' && data.name) {
-                    queue.push([...p, data.name]);
-                }
+                if (data.type === 'file' && typeof data.rawSize === 'number' && data.rawSize > 0) total += data.rawSize;
             });
+            lastDoc = snap.docs[snap.docs.length - 1];
         }
         return total;
+    }
+
+    function drainFolderSizeQueue() {
+        const maxConcurrent = 2;
+        while (folderSizeComputeActive < maxConcurrent && folderSizeComputeQueue.length) {
+            const job = folderSizeComputeQueue.shift();
+            if (!job) break;
+            folderSizeComputeActive += 1;
+
+            Promise.resolve()
+                .then(() => computeFolderSizeBytes(job.folderFullPath))
+                .then((bytes) => job.resolve(bytes))
+                .catch((e) => job.reject(e))
+                .finally(() => {
+                    folderSizeComputeActive -= 1;
+                    drainFolderSizeQueue();
+                });
+        }
+    }
+
+    function enqueueFolderSizeCompute(folderFullPath) {
+        return new Promise((resolve, reject) => {
+            folderSizeComputeQueue.push({ folderFullPath, resolve, reject });
+            drainFolderSizeQueue();
+        });
     }
 
     function subscribeFilesForCurrentPath() {
@@ -934,7 +970,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (!folderSizeInFlightByFullPathKey.has(folderKey)) {
-            const promise = computeFolderSizeBytes(folderFullPath).then((bytes) => {
+            const promise = enqueueFolderSizeCompute(folderFullPath).then((bytes) => {
                 folderSizeBytesByFullPathKey.set(folderKey, bytes);
                 folderSizeInFlightByFullPathKey.delete(folderKey);
                 queueRenderFiles();
@@ -989,7 +1025,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const icon = item.type === 'folder' ? '📁' : '📄';
             const iconClass = item.type === 'folder' ? 'icon-folder' : 'icon-file';
             const onclick = item.type === 'folder' ? `onclick="navigateTo('${item.name}')"` : '';
-            const size = item.type === 'folder' ? '-' : getFileDisplaySize(item);
+            const size = item.type === 'folder' ? calculateFolderSize(item) : getFileDisplaySize(item);
             const downloadLabel = t('download');
             const deleteLabel = t('delete');
             let downloadHref = item && item.url ? String(item.url) : '';
@@ -1136,16 +1172,9 @@ document.addEventListener('DOMContentLoaded', function () {
             const zipUrl = `${rustBase.replace(/\/+$/, '')}/v1/zip?bucket=${encodeURIComponent(bucketName)}&prefix=${encodeURIComponent(prefix)}&name=${encodeURIComponent(folder.name)}`;
 
             setZipOverlay(true, 5, 'Iniciando descarga…');
-            const a = document.createElement('a');
-            a.href = zipUrl;
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
-            a.download = (folder && folder.name ? String(folder.name) : 'folder') + '.zip';
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(() => {
-                try { a.remove(); } catch (e) { }
-            }, 1000);
+            try {
+                window.open(zipUrl, '_blank', 'noopener,noreferrer');
+            } catch (e) { }
             setTimeout(() => setZipOverlay(false, 100, ''), 2500);
             return;
         }
