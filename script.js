@@ -432,6 +432,8 @@ document.addEventListener('DOMContentLoaded', function () {
         return DEFAULT_RUST_API_BASE_URL;
     })();
 
+    const RUST_DOWNLOADS_ENABLED = false;
+
     // Initialize Firebase
     let db, storage;
     try {
@@ -1015,7 +1017,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+        const rustBase = RUST_DOWNLOADS_ENABLED && typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
         const bucketDefault = (firebase.app && firebase.app().options && firebase.app().options.storageBucket)
             ? firebase.app().options.storageBucket
             : '';
@@ -1166,7 +1168,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const bucketName =
             folder.bucket ||
             ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
-        const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+        const rustBase = RUST_DOWNLOADS_ENABLED && typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
         if (rustBase && bucketName) {
             const prefix = buildUploadStoragePrefix(folderFullPath);
             const zipUrl = `${rustBase.replace(/\/+$/, '')}/v1/zip?bucket=${encodeURIComponent(bucketName)}&prefix=${encodeURIComponent(prefix)}&name=${encodeURIComponent(folder.name)}`;
@@ -1230,12 +1232,9 @@ document.addEventListener('DOMContentLoaded', function () {
                     bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
                     if (!bucketName) throw new Error('Missing bucket for download');
 
-                    const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
-                    if (rustBase) {
-                        proxyUrl = `${rustBase.replace(/\/+$/, '')}/v1/download?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
-                    } else {
-                        proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
-                    }
+                    const rustBase = RUST_DOWNLOADS_ENABLED && typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+                    proxyUrl = file.url;
+                    if (!proxyUrl) throw new Error('Missing url for download');
 
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 120000);
