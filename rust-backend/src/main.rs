@@ -65,6 +65,10 @@ async fn healthz() -> impl IntoResponse {
   (StatusCode::OK, "ok")
 }
 
+async fn root() -> impl IntoResponse {
+  (StatusCode::OK, "ok")
+}
+
 async fn download_proxy(
   State(state): State<Arc<AppState>>,
   axum::extract::Query(q): axum::extract::Query<DownloadQuery>,
@@ -556,6 +560,7 @@ async fn translate_text(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+  println!("booting portal-backend");
   let project_id = env::var("GOOGLE_CLOUD_PROJECT")
     .or_else(|_| env::var("GCLOUD_PROJECT"))
     .unwrap_or_else(|_| "compresor-de-archivos-15e3a".to_string());
@@ -576,6 +581,8 @@ async fn main() -> anyhow::Result<()> {
     .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
   let app = axum::Router::new()
+    .route("/", get(root))
+    .route("/health", get(healthz))
     .route("/healthz", get(healthz))
     .route("/v1/comments", post(add_comment))
     .route("/v1/download", get(download_proxy))
@@ -587,7 +594,17 @@ async fn main() -> anyhow::Result<()> {
     .and_then(|v| v.parse().ok())
     .unwrap_or(8080);
   let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-  let listener = tokio::net::TcpListener::bind(addr).await?;
-  axum::serve(listener, app).await?;
+  let listener = match tokio::net::TcpListener::bind(addr).await {
+    Ok(l) => l,
+    Err(e) => {
+      eprintln!("bind error: {e}");
+      return Err(e.into());
+    }
+  };
+  println!("listening on {addr}");
+  if let Err(e) = axum::serve(listener, app).await {
+    eprintln!("serve error: {e}");
+    return Err(e.into());
+  }
   Ok(())
 }

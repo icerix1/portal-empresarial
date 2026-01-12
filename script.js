@@ -414,17 +414,22 @@ document.addEventListener('DOMContentLoaded', function () {
         appId: "1:1075076139650:web:0ded5b31cecf72b10f429b",
         measurementId: "G-PRTN16Q3SM"
     };
+    const DEFAULT_RUST_API_BASE_URL = 'https://portal-backend-ktjoryazzq-uc.a.run.app';
     const RUST_API_BASE_URL = (() => {
+        const normalize = (value) => String(value || '').trim().replace(/\/+$/, '');
         try {
             const v = localStorage.getItem('RUST_API_BASE_URL');
-            if (v && String(v).trim()) return String(v).trim();
+            if (v && String(v).trim()) return normalize(v);
         } catch (e) { }
         const meta = document.querySelector('meta[name="rust-api-base-url"]');
         const content = meta ? meta.getAttribute('content') : '';
-        if (content && String(content).trim()) return String(content).trim();
-        const w = typeof window.RUST_API_BASE_URL === 'string' ? window.RUST_API_BASE_URL.trim() : '';
-        if (w) return w;
-        return '';
+        if (content && String(content).trim()) return normalize(content);
+        const w = typeof window.RUST_API_BASE_URL === 'string' ? window.RUST_API_BASE_URL : '';
+        if (w && String(w).trim()) return normalize(w);
+        const host = window.location && window.location.hostname ? String(window.location.hostname).toLowerCase() : '';
+        if (!host || host === 'localhost' || host === '127.0.0.1') return '';
+        if (host.endsWith('github.io')) return DEFAULT_RUST_API_BASE_URL;
+        return DEFAULT_RUST_API_BASE_URL;
     })();
 
     // Initialize Firebase
@@ -441,7 +446,8 @@ document.addEventListener('DOMContentLoaded', function () {
         console.log("Firebase initialized successfully");
     } catch (e) {
         console.error("Firebase Init Error:", e);
-        document.getElementById('firebase-warning').style.display = 'flex';
+        const warning = document.getElementById('firebase-warning');
+        if (warning) warning.style.display = 'flex';
     }
 
     // State
@@ -1153,7 +1159,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
                     const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
                     if (rustBase) {
-                        proxyUrl = `${rustBase.replace(/\\/+$/, '')}/v1/download?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+                        proxyUrl = `${rustBase.replace(/\/+$/, '')}/v1/download?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
                     } else {
                         proxyUrl = `https://downloadproxy-ktjoryazzq-uc.a.run.app?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
                     }
@@ -1540,7 +1546,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (typeof fetch !== 'function') throw new Error('fetch-missing');
             const base = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
             if (!base) throw new Error('rust-base-missing');
-            const url = `${base.replace(/\\/+$/, '')}/v1/comments`;
+            const url = `${base.replace(/\/+$/, '')}/v1/comments`;
             let token = '';
             try {
                 const auth = firebase && firebase.auth ? firebase.auth() : null;
