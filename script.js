@@ -700,6 +700,12 @@ document.addEventListener('DOMContentLoaded', function () {
         return `uploads/${dir}${unique}_${safeName}`;
     }
 
+    function buildUploadStoragePrefix(pathArray) {
+        const safeParts = (pathArray || []).map(sanitizeStorageSegment).filter(Boolean);
+        const dir = safeParts.length ? safeParts.join('/') + '/' : '';
+        return `uploads/${dir}`;
+    }
+
     async function handleFiles(files) {
         if (!isAdmin) return;
         const auth = firebase.auth && firebase.auth();
@@ -982,7 +988,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const deleteLabel = t('delete');
             const actionBtn = item.type === 'folder'
                 ? `<button class="btn-action btn-action-primary" onclick="downloadFolder('${item.id}')" type="button">${downloadLabel}</button>`
-                : `<a href="${item.url}" target="_blank" class="btn-action btn-action-primary" download>${downloadLabel}</a>`;
+                : `<button class="btn-action btn-action-primary" onclick="downloadFile('${item.id}')" type="button">${downloadLabel}</button>`;
 
             return `
             <tr>
@@ -999,6 +1005,35 @@ document.addEventListener('DOMContentLoaded', function () {
             </tr>
             `;
         }).join('');
+    };
+
+    window.downloadFile = async function (fileId) {
+        if (!db) return;
+        const snap = await db.collection('files').doc(fileId).get();
+        if (!snap.exists) return;
+        const item = { id: snap.id, ...(snap.data() || {}) };
+        if (!item || item.type !== 'file') return;
+
+        const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+        const storagePath = item.storagePath || getStoragePathFromDownloadUrl(item.url);
+        const bucketName = item.bucket || getBucketFromDownloadUrl(item.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
+
+        if (rustBase && storagePath && bucketName && typeof fetch === 'function') {
+            const signedUrl = `${rustBase.replace(/\/+$/, '')}/v1/signed-url?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}&expires=3600`;
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 20000);
+                const resp = await fetch(signedUrl, { mode: 'cors', signal: controller.signal });
+                clearTimeout(timeoutId);
+                const json = await resp.json().catch(() => null);
+                if (resp.ok && json && json.ok && typeof json.url === 'string' && json.url) {
+                    window.open(json.url, '_blank');
+                    return;
+                }
+            } catch (e) { }
+        }
+
+        if (item.url) window.open(item.url, '_blank');
     };
 
     function renderBreadcrumbs(container) {
@@ -1105,8 +1140,29 @@ document.addEventListener('DOMContentLoaded', function () {
         const folder = { id: folderSnap.id, ...folderSnap.data() };
         if (!folder || folder.type !== 'folder') return;
 
-        const zip = new JSZip();
         const folderFullPath = [...folder.path, folder.name];
+
+        const bucketName =
+            folder.bucket ||
+            ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
+        const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+        if (rustBase && bucketName) {
+            const prefix = buildUploadStoragePrefix(folderFullPath);
+            const zipUrl = `${rustBase.replace(/\/+$/, '')}/v1/zip?bucket=${encodeURIComponent(bucketName)}&prefix=${encodeURIComponent(prefix)}&name=${encodeURIComponent(folder.name)}`;
+
+            setZipOverlay(true, 5, 'Iniciando descarga…');
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = zipUrl;
+            document.body.appendChild(iframe);
+            setTimeout(() => {
+                try { iframe.remove(); } catch (e) { }
+            }, 120000);
+            setTimeout(() => setZipOverlay(false, 100, ''), 2500);
+            return;
+        }
+
+        const zip = new JSZip();
 
         const items = [];
         const pendingFolders = [folderFullPath];
@@ -1512,26 +1568,6 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!author) author = t('anonymous');
         if (!text) { alert(t('writeCommentAlert')); return; }
 
-        const ensureAuth = async () => {
-            if (!firebase.auth) throw new Error('auth-sdk-missing');
-            const auth = firebase.auth();
-            if (!auth.currentUser) await auth.signInAnonymously();
-            if (!auth.currentUser) throw new Error('auth-missing');
-            try { await auth.currentUser.getIdToken(true); } catch (e) { }
-            return auth.currentUser;
-        };
-
-        const friendlyAuthError = (error) => {
-            const code = error && (error.code || error.message) ? String(error.code || error.message) : '';
-            if (code.includes('auth/operation-not-allowed')) {
-                return 'No se pudo iniciar sesión anónima. Activá "Anonymous" en Firebase Auth.';
-            }
-            if (code.includes('auth/unauthorized-domain')) {
-                return 'Dominio no autorizado. Agregá "icerix1.github.io" en Firebase Auth → Authorized domains.';
-            }
-            return 'No se pudo autenticar. Revisá Firebase Auth (Anonymous) y dominios autorizados.';
-        };
-
         const legacyId = (() => {
             if (resolved.legacyKey !== null) return resolved.legacyKey;
             const p = (Array.isArray(blogPosts) ? blogPosts : []).find((x) => {
@@ -1578,55 +1614,8 @@ document.addEventListener('DOMContentLoaded', function () {
             return json;
         };
 
-        const callViaProxy = async () => {
-            if (typeof fetch !== 'function') throw new Error('fetch-missing');
-            const base = `https://us-central1-${config.projectId}.cloudfunctions.net`;
-            const url = `${base}/addCommentProxy`;
-            const resp = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    postId,
-                    id: legacyId,
-                    author,
-                    text,
-                    lang: currentLang,
-                    isAdmin
-                })
-            });
-            const json = await resp.json().catch(() => null);
-            if (!resp.ok || !json || !json.ok) {
-                const msg = json && (json.error || json.message) ? String(json.error || json.message) : `HTTP ${resp.status}`;
-                const err = new Error(msg);
-                err.code = 'proxy-failed';
-                throw err;
-            }
-            try { console.info('[comments] guardado via firebase functions proxy'); } catch (e) { }
-            return json;
-        };
-
-        const callViaCallable = async () => {
-            await ensureAuth();
-            if (!firebase.functions) throw new Error('functions-sdk-missing');
-            const app = firebase.app ? firebase.app() : null;
-            const fns = app && app.functions ? app.functions('us-central1') : firebase.functions();
-            const addCommentFn = fns.httpsCallable('addComment');
-            const result = await addCommentFn({
-                postId,
-                id: legacyId,
-                author,
-                text,
-                lang: currentLang,
-                isAdmin
-            });
-            try { console.info('[comments] guardado via firebase functions callable'); } catch (e) { }
-            return result;
-        };
-
         Promise.resolve()
             .then(callViaRust)
-            .catch(callViaProxy)
-            .catch(callViaCallable)
             .then(() => {
             if (input) input.value = '';
             const keyForDraft = usedKey || postId;
@@ -1638,11 +1627,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 alert('No se pudo guardar el comentario (Rust backend).');
                 return;
             }
-            if (error && String(error.code || '').includes('unauthenticated')) {
-                alert(friendlyAuthError(error));
-                return;
-            }
-            alert('No se pudo guardar el comentario. Revisá configuración de Functions/Auth y permisos.');
+            alert('No se pudo guardar el comentario.');
         });
     };
 

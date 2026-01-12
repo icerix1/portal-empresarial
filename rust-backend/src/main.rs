@@ -1,14 +1,19 @@
-use axum::extract::State;
+use async_zip::tokio::write::ZipFileWriter;
+use async_zip::{Compression, ZipEntryBuilder};
+use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Json;
-use futures_util::TryStreamExt;
+use futures_lite::io::AsyncWriteExt as FuturesWriteExt;
+use futures_util::{StreamExt, TryStreamExt};
 use percent_encoding::utf8_percent_encode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::env;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt as TokioWriteExt;
+use tokio_util::io::ReaderStream;
 use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Clone)]
@@ -44,6 +49,28 @@ struct DownloadQuery {
   filePath: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct ZipQuery {
+  #[serde(default)]
+  bucket: String,
+  #[serde(default)]
+  prefix: String,
+  #[serde(default)]
+  name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct SignedUrlQuery {
+  #[serde(default)]
+  bucket: String,
+  #[serde(default)]
+  filePath: String,
+  #[serde(default)]
+  expires: i64,
+}
+
 #[derive(Debug, Serialize)]
 struct OkResponse<T> {
   ok: bool,
@@ -52,6 +79,12 @@ struct OkResponse<T> {
   #[serde(skip_serializing_if = "Option::is_none")]
   error: Option<String>,
 }
+
+const URL_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+  .remove(b'-')
+  .remove(b'_')
+  .remove(b'.')
+  .remove(b'~');
 
 fn normalize_lang(raw: &str) -> &str {
   match raw.trim().to_lowercase().as_str() {
@@ -71,6 +104,7 @@ async fn root() -> impl IntoResponse {
 
 async fn download_proxy(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   axum::extract::Query(q): axum::extract::Query<DownloadQuery>,
 ) -> impl IntoResponse {
   let bucket = q.bucket.trim().to_string();
@@ -115,7 +149,7 @@ async fn download_proxy(
   candidates.dedup();
 
   for b in candidates {
-    match gcs_stream_object(&state.http, &token, &b, &file_path).await {
+    match gcs_stream_object(&state.http, &token, &b, &file_path, &headers).await {
       Ok(Some(resp)) => return resp,
       Ok(None) => continue,
       Err(e) => {
@@ -133,6 +167,207 @@ async fn download_proxy(
     Json(json!({ "ok": false, "error": "Not found" })),
   )
     .into_response()
+}
+
+async fn zip_folder(
+  State(state): State<Arc<AppState>>,
+  Query(q): Query<ZipQuery>,
+) -> impl IntoResponse {
+  let prefix = q.prefix.trim().to_string();
+  if prefix.is_empty() {
+    return (
+      StatusCode::BAD_REQUEST,
+      Json(json!({ "ok": false, "error": "Missing prefix" })),
+    )
+      .into_response();
+  }
+
+  let token = match fetch_access_token(&state.http).await {
+    Ok(t) => t,
+    Err(e) => {
+      return (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "ok": false, "error": format!("auth token error: {e}") })),
+      )
+        .into_response();
+    }
+  };
+
+  let candidates = build_bucket_candidates(&q.bucket, &state.project_id);
+
+  let mut chosen_bucket: Option<String> = None;
+  let mut object_names: Vec<String> = Vec::new();
+  for b in candidates {
+    match gcs_list_objects(&state.http, &token, &b, &prefix).await {
+      Ok(list) => {
+        if !list.is_empty() {
+          chosen_bucket = Some(b);
+          object_names = list;
+          break;
+        }
+      }
+      Err(e) => {
+        return (
+          StatusCode::INTERNAL_SERVER_ERROR,
+          Json(json!({ "ok": false, "error": format!("gcs list error: {e}") })),
+        )
+          .into_response();
+      }
+    }
+  }
+
+  let chosen_bucket = match chosen_bucket {
+    Some(b) => b,
+    None => {
+      return (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "ok": false, "error": "Not found" })),
+      )
+        .into_response();
+    }
+  };
+
+  let mut zip_name = q.name.trim().to_string();
+  if zip_name.is_empty() {
+    zip_name = "folder".to_string();
+  }
+  if !zip_name.to_lowercase().ends_with(".zip") {
+    zip_name.push_str(".zip");
+  }
+  let zip_name = zip_name.replace('"', "_");
+
+  let (mut reader, mut writer) = tokio::io::duplex(1024 * 128);
+  let http = state.http.clone();
+  let token = token.clone();
+  let prefix_clone = prefix.clone();
+  tokio::spawn(async move {
+    let res: anyhow::Result<()> = async {
+      let mut zip = ZipFileWriter::with_tokio(&mut writer);
+
+      for object_name in object_names {
+        if object_name.ends_with('/') {
+          continue;
+        }
+
+        let entry_name = zip_entry_name(&prefix_clone, &object_name);
+        if entry_name.trim().is_empty() {
+          continue;
+        }
+
+        let builder = ZipEntryBuilder::new(entry_name.into(), Compression::Stored);
+        let mut entry = zip.write_entry_stream(builder).await?;
+
+        let url = gcs_media_url(&chosen_bucket, &object_name);
+        let upstream = http.get(url).bearer_auth(&token).send().await?;
+        let status = upstream.status();
+        if !status.is_success() {
+          anyhow::bail!("upstream http {}", status);
+        }
+
+        let mut stream = upstream.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+          let bytes = chunk?;
+          entry.write_all(&bytes).await?;
+        }
+        entry.close().await?;
+      }
+
+      zip.close().await?;
+      Ok(())
+    }
+    .await;
+
+    if res.is_err() {
+      let _ = writer.shutdown().await;
+    }
+  });
+
+  let mut builder = Response::builder().status(StatusCode::OK);
+  builder = builder.header(header::CONTENT_TYPE, "application/zip");
+  builder = builder.header(
+    header::CONTENT_DISPOSITION,
+    format!("attachment; filename=\"{zip_name}\""),
+  );
+  builder = builder.header(header::CACHE_CONTROL, "no-store");
+
+  let body = axum::body::Body::from_stream(ReaderStream::new(reader));
+  match builder.body(body) {
+    Ok(resp) => resp,
+    Err(_) => (
+      StatusCode::INTERNAL_SERVER_ERROR,
+      Json(json!({ "ok": false, "error": "response build error" })),
+    )
+      .into_response(),
+  }
+}
+
+async fn signed_url(
+  State(state): State<Arc<AppState>>,
+  Query(q): Query<SignedUrlQuery>,
+) -> impl IntoResponse {
+  let bucket = q.bucket.trim().to_string();
+  let file_path = q.filePath.trim().to_string();
+  if bucket.is_empty() || file_path.is_empty() {
+    return (
+      StatusCode::BAD_REQUEST,
+      Json(json!({ "ok": false, "error": "Missing bucket or filePath" })),
+    )
+      .into_response();
+  }
+
+  let expires = if q.expires > 0 { q.expires } else { 3600 };
+  let expires = expires.clamp(60, 604800);
+
+  let token = match fetch_access_token(&state.http).await {
+    Ok(t) => t,
+    Err(e) => {
+      return (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "ok": false, "error": format!("auth token error: {e}") })),
+      )
+        .into_response();
+    }
+  };
+
+  let service_account = env::var("GCS_SIGNING_SERVICE_ACCOUNT")
+    .or_else(|_| env::var("GOOGLE_SERVICE_ACCOUNT_EMAIL"))
+    .unwrap_or_default();
+  let service_account = if service_account.trim().is_empty() {
+    match fetch_service_account_email(&state.http).await {
+      Ok(v) => v,
+      Err(e) => {
+        return (
+          StatusCode::INTERNAL_SERVER_ERROR,
+          Json(json!({ "ok": false, "error": format!("metadata email error: {e}") })),
+        )
+          .into_response();
+      }
+    }
+  } else {
+    service_account.trim().to_string()
+  };
+
+  let url = match gcs_signed_url_v4(
+    &state.http,
+    &token,
+    &service_account,
+    &bucket,
+    &file_path,
+    expires as u32,
+  )
+  .await
+  {
+    Ok(u) => u,
+    Err(e) => {
+      return (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "ok": false, "error": format!("sign error: {e}") })),
+      )
+        .into_response();
+    }
+  };
+
+  (StatusCode::OK, Json(json!({ "ok": true, "url": url }))).into_response()
 }
 
 async fn add_comment(
@@ -299,43 +534,126 @@ async fn fetch_access_token(http: &reqwest::Client) -> anyhow::Result<String> {
   Ok(token)
 }
 
+async fn fetch_service_account_email(http: &reqwest::Client) -> anyhow::Result<String> {
+  let resp = http
+    .get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email")
+    .header("Metadata-Flavor", "Google")
+    .send()
+    .await?;
+  let status = resp.status();
+  let email = resp.text().await.unwrap_or_default();
+  if !status.is_success() {
+    anyhow::bail!("metadata email http {}", status);
+  }
+  let email = email.trim().to_string();
+  if email.is_empty() {
+    anyhow::bail!("missing service account email");
+  }
+  Ok(email)
+}
+
+fn build_bucket_candidates(bucket: &str, project_id: &str) -> Vec<String> {
+  let bucket = bucket.trim();
+  let project_id = project_id.trim();
+
+  let mut candidates: Vec<String> = Vec::new();
+  if !bucket.is_empty() {
+    candidates.push(bucket.to_string());
+    if bucket.ends_with(".firebasestorage.app") {
+      candidates.push(
+        bucket
+          .trim_end_matches(".firebasestorage.app")
+          .to_string()
+          + ".appspot.com",
+      );
+    }
+  }
+  if !project_id.is_empty() {
+    candidates.push(format!("{project_id}.appspot.com"));
+    candidates.push(format!("{project_id}.firebasestorage.app"));
+  }
+
+  candidates.retain(|b| !b.trim().is_empty());
+  candidates.dedup();
+  candidates
+}
+
+fn gcs_media_url(bucket: &str, object_name: &str) -> String {
+  let encoded_object =
+    utf8_percent_encode(object_name, percent_encoding::NON_ALPHANUMERIC).to_string();
+  format!(
+    "https://storage.googleapis.com/storage/v1/b/{}/o/{}?alt=media",
+    bucket, encoded_object
+  )
+}
+
 async fn gcs_stream_object(
   http: &reqwest::Client,
   token: &str,
   bucket: &str,
   object_name: &str,
+  request_headers: &HeaderMap,
 ) -> anyhow::Result<Option<axum::response::Response>> {
   let bucket = bucket.trim();
   if bucket.is_empty() {
     return Ok(None);
   }
 
-  let encoded_object = utf8_percent_encode(object_name, percent_encoding::NON_ALPHANUMERIC)
-    .to_string();
-  let url = format!(
-    "https://storage.googleapis.com/storage/v1/b/{}/o/{}?alt=media",
-    bucket, encoded_object
-  );
+  let url = gcs_media_url(bucket, object_name);
+  let mut req = http.get(url).bearer_auth(token);
+  if let Some(v) = request_headers.get(header::RANGE) {
+    req = req.header(header::RANGE, v);
+  }
+  if let Some(v) = request_headers.get(header::IF_NONE_MATCH) {
+    req = req.header(header::IF_NONE_MATCH, v);
+  }
+  if let Some(v) = request_headers.get(header::IF_MODIFIED_SINCE) {
+    req = req.header(header::IF_MODIFIED_SINCE, v);
+  }
+  if let Some(v) = request_headers.get(header::IF_MATCH) {
+    req = req.header(header::IF_MATCH, v);
+  }
+  if let Some(v) = request_headers.get(header::IF_RANGE) {
+    req = req.header(header::IF_RANGE, v);
+  }
 
-  let upstream = http.get(url).bearer_auth(token).send().await?;
+  let upstream = req.send().await?;
   let status = upstream.status();
   if status.as_u16() == 404 {
     return Ok(None);
   }
-  if !status.is_success() {
+  if status.as_u16() == 304 {
+    let mut builder = axum::response::Response::builder().status(status);
+    for h in [
+      header::CACHE_CONTROL,
+      header::ETAG,
+      header::LAST_MODIFIED,
+    ] {
+      if let Some(v) = upstream.headers().get(&h) {
+        builder = builder.header(h, v);
+      }
+    }
+    let resp = builder.body(axum::body::Body::empty())?;
+    return Ok(Some(resp));
+  }
+  if !status.is_success() && status.as_u16() != 206 {
     let t = upstream.text().await.unwrap_or_default();
     anyhow::bail!("upstream http {} {}", status, t);
   }
 
   let mut builder = axum::response::Response::builder().status(status);
-  if let Some(v) = upstream.headers().get(header::CONTENT_TYPE) {
-    builder = builder.header(header::CONTENT_TYPE, v);
-  }
-  if let Some(v) = upstream.headers().get(header::CONTENT_LENGTH) {
-    builder = builder.header(header::CONTENT_LENGTH, v);
-  }
-  if let Some(v) = upstream.headers().get(header::CACHE_CONTROL) {
-    builder = builder.header(header::CACHE_CONTROL, v);
+  for h in [
+    header::CONTENT_TYPE,
+    header::CONTENT_LENGTH,
+    header::CACHE_CONTROL,
+    header::CONTENT_RANGE,
+    header::ACCEPT_RANGES,
+    header::ETAG,
+    header::LAST_MODIFIED,
+  ] {
+    if let Some(v) = upstream.headers().get(&h) {
+      builder = builder.header(h, v);
+    }
   }
 
   let stream = upstream
@@ -344,6 +662,204 @@ async fn gcs_stream_object(
   let body = axum::body::Body::from_stream(stream);
   let resp = builder.body(body)?;
   Ok(Some(resp))
+}
+
+#[derive(Debug, Deserialize)]
+struct GcsListResponse {
+  #[serde(default)]
+  items: Vec<GcsObject>,
+  #[serde(default)]
+  nextPageToken: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GcsObject {
+  #[serde(default)]
+  name: String,
+}
+
+async fn gcs_list_objects(
+  http: &reqwest::Client,
+  token: &str,
+  bucket: &str,
+  prefix: &str,
+) -> anyhow::Result<Vec<String>> {
+  let prefix = prefix.trim();
+  if prefix.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let mut out: Vec<String> = Vec::new();
+  let mut page_token: Option<String> = None;
+
+  loop {
+    let mut url = format!(
+      "https://storage.googleapis.com/storage/v1/b/{}/o?prefix={}&fields=items(name),nextPageToken&maxResults=1000",
+      utf8_percent_encode(bucket, URL_ENCODE_SET),
+      utf8_percent_encode(prefix, URL_ENCODE_SET)
+    );
+    if let Some(t) = &page_token {
+      url.push_str("&pageToken=");
+      url.push_str(&utf8_percent_encode(t, URL_ENCODE_SET).to_string());
+    }
+
+    let resp = http.get(url).bearer_auth(token).send().await?;
+    let status = resp.status();
+    if status.as_u16() == 404 {
+      return Ok(Vec::new());
+    }
+    let json: GcsListResponse = resp.json().await.unwrap_or(GcsListResponse {
+      items: Vec::new(),
+      nextPageToken: String::new(),
+    });
+    if !status.is_success() {
+      anyhow::bail!("list http {}", status);
+    }
+
+    for item in json.items {
+      if !item.name.trim().is_empty() {
+        out.push(item.name);
+      }
+    }
+
+    let next = json.nextPageToken.trim().to_string();
+    if next.is_empty() {
+      break;
+    }
+    page_token = Some(next);
+  }
+
+  Ok(out)
+}
+
+fn zip_entry_name(prefix: &str, object_name: &str) -> String {
+  let mut rel = object_name.strip_prefix(prefix).unwrap_or(object_name);
+  rel = rel.trim_start_matches('/');
+  let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty()).collect();
+  if parts.is_empty() {
+    return String::new();
+  }
+
+  let mut out_parts: Vec<String> = Vec::with_capacity(parts.len());
+  for (idx, part) in parts.iter().enumerate() {
+    if idx == parts.len().saturating_sub(1) {
+      out_parts.push(strip_upload_unique_prefix(part).to_string());
+    } else {
+      out_parts.push((*part).to_string());
+    }
+  }
+  out_parts.join("/")
+}
+
+fn strip_upload_unique_prefix(file_name: &str) -> &str {
+  if let Some(i) = file_name.find('_') {
+    let rest = &file_name[i + 1..];
+    if !rest.trim().is_empty() {
+      return rest;
+    }
+  }
+  file_name
+}
+
+async fn gcs_signed_url_v4(
+  http: &reqwest::Client,
+  token: &str,
+  service_account_email: &str,
+  bucket: &str,
+  object_name: &str,
+  expires_seconds: u32,
+) -> anyhow::Result<String> {
+  use base64::Engine;
+  use sha2::Digest;
+  use time::format_description;
+
+  let now = time::OffsetDateTime::now_utc();
+  let date = now.format(&format_description::parse("[year][month][day]")?)?;
+  let datetime = now.format(&format_description::parse("[year][month][day]T[hour][minute][second]Z")?)?;
+
+  let scope = format!("{date}/auto/storage/goog4_request");
+  let credential = format!("{service_account_email}/{scope}");
+
+  let host = "storage.googleapis.com";
+  let canonical_uri = gcs_canonical_uri(bucket, object_name);
+
+  let mut query_params: Vec<(String, String)> = vec![
+    ("X-Goog-Algorithm".to_string(), "GOOG4-RSA-SHA256".to_string()),
+    ("X-Goog-Credential".to_string(), credential),
+    ("X-Goog-Date".to_string(), datetime.clone()),
+    ("X-Goog-Expires".to_string(), expires_seconds.to_string()),
+    ("X-Goog-SignedHeaders".to_string(), "host".to_string()),
+  ];
+  query_params.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+  let canonical_query = query_params
+    .iter()
+    .map(|(k, v)| {
+      format!(
+        "{}={}",
+        utf8_percent_encode(k, URL_ENCODE_SET),
+        utf8_percent_encode(v, URL_ENCODE_SET)
+      )
+    })
+    .collect::<Vec<_>>()
+    .join("&");
+
+  let canonical_headers = format!("host:{host}\n");
+  let signed_headers = "host";
+  let payload_hash = "UNSIGNED-PAYLOAD";
+
+  let canonical_request = format!(
+    "GET\n{canonical_uri}\n{canonical_query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+  );
+  let canonical_request_hash = hex::encode(sha2::Sha256::digest(canonical_request.as_bytes()));
+
+  let string_to_sign = format!(
+    "GOOG4-RSA-SHA256\n{datetime}\n{scope}\n{canonical_request_hash}"
+  );
+
+  let payload = base64::engine::general_purpose::STANDARD.encode(string_to_sign.as_bytes());
+  let sign_url = format!(
+    "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{}:signBlob",
+    utf8_percent_encode(service_account_email, URL_ENCODE_SET)
+  );
+  let resp = http
+    .post(sign_url)
+    .bearer_auth(token)
+    .json(&json!({ "payload": payload }))
+    .send()
+    .await?;
+  let status = resp.status();
+  let json: serde_json::Value = resp.json().await.unwrap_or(json!({}));
+  if !status.is_success() {
+    anyhow::bail!("signBlob http {}", status);
+  }
+  let signed_blob = json
+    .get("signedBlob")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .to_string();
+  if signed_blob.is_empty() {
+    anyhow::bail!("missing signedBlob");
+  }
+  let sig_bytes = base64::engine::general_purpose::STANDARD
+    .decode(signed_blob.as_bytes())
+    .map_err(|e| anyhow::anyhow!("base64 decode: {e}"))?;
+  let signature_hex = hex::encode(sig_bytes);
+
+  Ok(format!(
+    "https://{host}{canonical_uri}?{canonical_query}&X-Goog-Signature={signature_hex}"
+  ))
+}
+
+fn gcs_canonical_uri(bucket: &str, object_name: &str) -> String {
+  let mut parts: Vec<String> = Vec::new();
+  parts.push(utf8_percent_encode(bucket.trim(), URL_ENCODE_SET).to_string());
+  for seg in object_name.split('/') {
+    if seg.is_empty() {
+      continue;
+    }
+    parts.push(utf8_percent_encode(seg, URL_ENCODE_SET).to_string());
+  }
+  format!("/{}", parts.join("/"))
 }
 
 fn is_digits(s: &str) -> bool {
@@ -578,7 +1094,15 @@ async fn main() -> anyhow::Result<()> {
   let cors = CorsLayer::new()
     .allow_origin(Any)
     .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-    .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+    .allow_headers([
+      header::CONTENT_TYPE,
+      header::AUTHORIZATION,
+      header::RANGE,
+      header::IF_NONE_MATCH,
+      header::IF_MODIFIED_SINCE,
+      header::IF_MATCH,
+      header::IF_RANGE,
+    ]);
 
   let app = axum::Router::new()
     .route("/", get(root))
@@ -586,6 +1110,8 @@ async fn main() -> anyhow::Result<()> {
     .route("/healthz", get(healthz))
     .route("/v1/comments", post(add_comment))
     .route("/v1/download", get(download_proxy))
+    .route("/v1/zip", get(zip_folder))
+    .route("/v1/signed-url", get(signed_url))
     .layer(cors)
     .with_state(state);
 
