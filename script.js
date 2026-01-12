@@ -979,16 +979,30 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
+        const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+        const bucketDefault = (firebase.app && firebase.app().options && firebase.app().options.storageBucket)
+            ? firebase.app().options.storageBucket
+            : '';
+        const rustDownloadBase = rustBase ? rustBase.replace(/\/+$/, '') + '/v1/download' : '';
+
         filesContainer.innerHTML = items.map(item => {
             const icon = item.type === 'folder' ? '📁' : '📄';
             const iconClass = item.type === 'folder' ? 'icon-folder' : 'icon-file';
             const onclick = item.type === 'folder' ? `onclick="navigateTo('${item.name}')"` : '';
-            const size = item.type === 'folder' ? calculateFolderSize(item) : getFileDisplaySize(item);
+            const size = item.type === 'folder' ? '-' : getFileDisplaySize(item);
             const downloadLabel = t('download');
             const deleteLabel = t('delete');
+            let downloadHref = item && item.url ? String(item.url) : '';
+            if (item && item.type === 'file' && rustDownloadBase) {
+                const storagePath = item.storagePath || getStoragePathFromDownloadUrl(downloadHref);
+                const bucketName = item.bucket || getBucketFromDownloadUrl(downloadHref) || bucketDefault;
+                if (storagePath && bucketName) {
+                    downloadHref = `${rustDownloadBase}?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
+                }
+            }
             const actionBtn = item.type === 'folder'
                 ? `<button class="btn-action btn-action-primary" onclick="downloadFolder('${item.id}')" type="button">${downloadLabel}</button>`
-                : `<button class="btn-action btn-action-primary" onclick="downloadFile('${item.id}')" type="button">${downloadLabel}</button>`;
+                : `<a href="${downloadHref}" target="_blank" rel="noopener noreferrer" class="btn-action btn-action-primary" download>${downloadLabel}</a>`;
 
             return `
             <tr>
@@ -1005,35 +1019,6 @@ document.addEventListener('DOMContentLoaded', function () {
             </tr>
             `;
         }).join('');
-    };
-
-    window.downloadFile = async function (fileId) {
-        if (!db) return;
-        const snap = await db.collection('files').doc(fileId).get();
-        if (!snap.exists) return;
-        const item = { id: snap.id, ...(snap.data() || {}) };
-        if (!item || item.type !== 'file') return;
-
-        const rustBase = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
-        const storagePath = item.storagePath || getStoragePathFromDownloadUrl(item.url);
-        const bucketName = item.bucket || getBucketFromDownloadUrl(item.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
-
-        if (rustBase && storagePath && bucketName && typeof fetch === 'function') {
-            const signedUrl = `${rustBase.replace(/\/+$/, '')}/v1/signed-url?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}&expires=3600`;
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 20000);
-                const resp = await fetch(signedUrl, { mode: 'cors', signal: controller.signal });
-                clearTimeout(timeoutId);
-                const json = await resp.json().catch(() => null);
-                if (resp.ok && json && json.ok && typeof json.url === 'string' && json.url) {
-                    window.open(json.url, '_blank');
-                    return;
-                }
-            } catch (e) { }
-        }
-
-        if (item.url) window.open(item.url, '_blank');
     };
 
     function renderBreadcrumbs(container) {
@@ -1284,33 +1269,28 @@ document.addEventListener('DOMContentLoaded', function () {
 
             if (!confirm(`Delete folder "${item.name}"?`)) return;
             const folderFullPath = [...(item.path || []), item.name];
+            const folderKey = makePathKey(folderFullPath);
+            const endKey = folderKey + '\uf8ff';
+            let lastDoc = null;
 
-            const idsToDelete = [];
-            const pendingFolders = [folderFullPath];
-            const visited = new Set();
+            while (true) {
+                let q = db.collection('files')
+                    .where('pathKey', '>=', folderKey)
+                    .where('pathKey', '<', endKey)
+                    .orderBy('pathKey')
+                    .limit(450);
+                if (lastDoc) q = q.startAfter(lastDoc);
+                const childrenSnap = await q.get();
+                if (childrenSnap.empty) break;
 
-            while (pendingFolders.length) {
-                const p = pendingFolders.shift();
-                const key = makePathKey(p);
-                if (visited.has(key)) continue;
-                visited.add(key);
-
-                const childrenSnap = await db.collection('files').where('path', '==', p).get();
-                childrenSnap.forEach((doc) => {
-                    const data = doc.data() || {};
-                    idsToDelete.push(doc.id);
-                    if (data.type === 'folder' && data.name) pendingFolders.push([...p, data.name]);
-                });
-            }
-
-            idsToDelete.push(id);
-
-            for (let i = 0; i < idsToDelete.length; i += 450) {
-                const chunk = idsToDelete.slice(i, i + 450);
                 const batch = db.batch();
-                for (const docId of chunk) batch.delete(db.collection('files').doc(docId));
+                childrenSnap.docs.forEach((d) => batch.delete(d.ref));
                 await batch.commit();
+
+                lastDoc = childrenSnap.docs[childrenSnap.docs.length - 1];
             }
+
+            await db.collection('files').doc(id).delete();
         }).catch(handleListenerError);
     };
 
