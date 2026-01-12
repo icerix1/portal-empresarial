@@ -1173,6 +1173,16 @@ document.addEventListener('DOMContentLoaded', function () {
         }, 2000);
     }
 
+    function getFunctionsBaseUrl() {
+        const region = 'us-central1';
+        const projectId =
+            (firebase.app && firebase.app().options && firebase.app().options.projectId)
+                ? String(firebase.app().options.projectId)
+                : '';
+        if (!projectId) return '';
+        return `https://${region}-${projectId}.cloudfunctions.net`;
+    }
+
     window.downloadFile = function (fileId) {
         const item = (Array.isArray(currentFolderItems) ? currentFolderItems : []).find((x) => x && x.id === fileId);
         if (!item || item.type !== 'file') return;
@@ -1196,71 +1206,16 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     window.downloadFolder = async function (folderId, folderName) {
-        if (!db) return;
-        const folderSnap = await db.collection('files').doc(folderId).get();
-        if (!folderSnap.exists) return;
-        const folder = { id: folderSnap.id, ...folderSnap.data() };
-        if (!folder || folder.type !== 'folder') return;
-
-        const folderFullPath = [...folder.path, folder.name];
-        const folderKey = makePathKey(folderFullPath);
-        if (!folderKey) return;
-
-        const files = [];
-
-        const directSnap = await db.collection('files')
-            .where('pathKey', '==', folderKey)
-            .get();
-        directSnap.forEach((doc) => {
-            const data = doc.data() || {};
-            if (data.type !== 'file' || !data.url) return;
-            const relativeParts = (data.path || []).slice(folderFullPath.length);
-            const relativePath = [...relativeParts, data.name].join('/');
-            files.push({ name: data.name, url: data.url || '', relativePath });
-        });
-
-        const startKey = folderKey + '\u0001';
-        const endKey = startKey + '\uf8ff';
-        let lastDoc = null;
-        while (true) {
-            let q = db.collection('files')
-                .where('pathKey', '>=', startKey)
-                .where('pathKey', '<', endKey)
-                .orderBy('pathKey')
-                .limit(1000);
-            if (lastDoc) q = q.startAfter(lastDoc);
-            const snap = await q.get();
-            if (snap.empty) break;
-            snap.forEach((doc) => {
-                const data = doc.data() || {};
-                if (data.type !== 'file' || !data.url) return;
-                const relativeParts = (data.path || []).slice(folderFullPath.length);
-                const relativePath = [...relativeParts, data.name].join('/');
-                files.push({ name: data.name, url: data.url || '', relativePath });
-            });
-            lastDoc = snap.docs[snap.docs.length - 1];
-        }
-
-        files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-
-        if (!files.length) {
-            alert('La carpeta está vacía');
+        const base = getFunctionsBaseUrl();
+        if (!base) {
+            alert('No se pudo preparar el ZIP (Functions).');
             return;
         }
 
-        const total = files.length;
-        let completed = 0;
-        setZipOverlay(true, 0, `0/${total}`);
-
-        for (const f of files) {
-            completed += 1;
-            const pct = (completed / total) * 100;
-            setZipOverlay(true, pct, `${completed}/${total}`);
-            triggerDirectDownload(f.url, f.name);
-            await new Promise(r => setTimeout(r, 120));
-        }
-
-        setTimeout(() => setZipOverlay(false, 100, ''), 1500);
+        const url = `${base.replace(/\/+$/, '')}/zipFolder?folderId=${encodeURIComponent(String(folderId || ''))}`;
+        setZipOverlay(true, 5, 'Preparando ZIP…');
+        triggerDirectDownload(url, (folderName ? String(folderName) : 'carpeta') + '.zip');
+        setTimeout(() => setZipOverlay(false, 100, ''), 3500);
     };
 
     // --- Admin Actions ---
