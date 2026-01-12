@@ -1136,13 +1136,16 @@ document.addEventListener('DOMContentLoaded', function () {
             const zipUrl = `${rustBase.replace(/\/+$/, '')}/v1/zip?bucket=${encodeURIComponent(bucketName)}&prefix=${encodeURIComponent(prefix)}&name=${encodeURIComponent(folder.name)}`;
 
             setZipOverlay(true, 5, 'Iniciando descarga…');
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = zipUrl;
-            document.body.appendChild(iframe);
+            const a = document.createElement('a');
+            a.href = zipUrl;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.download = (folder && folder.name ? String(folder.name) : 'folder') + '.zip';
+            document.body.appendChild(a);
+            a.click();
             setTimeout(() => {
-                try { iframe.remove(); } catch (e) { }
-            }, 120000);
+                try { a.remove(); } catch (e) { }
+            }, 1000);
             setTimeout(() => setZipOverlay(false, 100, ''), 2500);
             return;
         }
