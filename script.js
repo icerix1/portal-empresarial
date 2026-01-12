@@ -1538,7 +1538,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (!x) return false;
                 return typeof x.firebaseId === 'string' && x.firebaseId.trim() === postId;
             });
-            const n = p && (p.id ?? p.createdAt);
+            const n = p && (p.id != null ? p.id : p.createdAt);
             return (typeof n === 'number' && Number.isFinite(n)) ? n : null;
         })();
 
