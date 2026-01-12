@@ -1131,29 +1131,42 @@ document.addEventListener('DOMContentLoaded', function () {
         overlay.className = 'zip-overlay hidden';
         overlay.innerHTML = `
             <div class="zip-overlay-card">
-                <div class="zip-overlay-title">Descargando carpeta…</div>
+                <div class="zip-overlay-title" id="zipOverlayTitle">Descargando…</div>
                 <div class="zip-overlay-sub" id="zipOverlaySub">Preparando…</div>
                 <div class="zip-overlay-bar"><div class="zip-overlay-fill" id="zipOverlayFill"></div></div>
                 <div class="zip-overlay-percent" id="zipOverlayPercent">0%</div>
+                <div style="display:flex; gap:10px; justify-content:center; margin-top:12px;">
+                    <button class="btn btn-outline" id="zipOverlayCancel" type="button">Cancelar</button>
+                </div>
             </div>
         `;
         document.body.appendChild(overlay);
         return overlay;
     }
 
-    function setZipOverlay(visible, percent, text) {
+    function setZipOverlay(visible, percent, text, title, onCancel) {
         const overlay = ensureZipOverlay();
+        const titleEl = overlay.querySelector('#zipOverlayTitle');
         const sub = overlay.querySelector('#zipOverlaySub');
         const fill = overlay.querySelector('#zipOverlayFill');
         const pct = overlay.querySelector('#zipOverlayPercent');
+        const cancelBtn = overlay.querySelector('#zipOverlayCancel');
         if (visible) overlay.classList.remove('hidden');
         else overlay.classList.add('hidden');
+        if (titleEl && typeof title === 'string' && title.trim()) titleEl.textContent = title;
         if (typeof percent === 'number') {
             const clamped = Math.max(0, Math.min(100, percent));
             if (fill) fill.style.width = clamped + '%';
             if (pct) pct.textContent = Math.round(clamped) + '%';
+        } else {
+            if (fill) fill.style.width = '0%';
+            if (pct) pct.textContent = '—';
         }
         if (sub && typeof text === 'string') sub.textContent = text;
+        if (cancelBtn) {
+            cancelBtn.onclick = typeof onCancel === 'function' ? onCancel : null;
+            cancelBtn.style.display = typeof onCancel === 'function' ? 'inline-flex' : 'none';
+        }
     }
 
     function triggerDirectDownload(href, filename) {
@@ -1183,6 +1196,131 @@ document.addEventListener('DOMContentLoaded', function () {
         return `https://${region}-${projectId}.cloudfunctions.net`;
     }
 
+    function parseFilenameFromContentDisposition(value) {
+        const cd = typeof value === 'string' ? value : '';
+        if (!cd) return '';
+        const utf8 = cd.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+        if (utf8 && utf8[1]) {
+            try { return decodeURIComponent(utf8[1]); } catch (e) { }
+            return String(utf8[1]);
+        }
+        const ascii = cd.match(/filename\s*=\s*"([^"]+)"/i) || cd.match(/filename\s*=\s*([^;]+)/i);
+        if (ascii && ascii[1]) return String(ascii[1]).trim().replace(/^"+|"+$/g, '');
+        return '';
+    }
+
+    async function downloadWithProgress(url, fallbackFileName, overlayTitle) {
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const onCancel = controller ? () => controller.abort() : null;
+        setZipOverlay(true, 0, 'Conectando…', overlayTitle, onCancel);
+
+        const safeFallback = (fallbackFileName ? String(fallbackFileName) : '').trim() || 'download';
+
+        let resp;
+        try {
+            resp = await fetch(url, {
+                method: 'GET',
+                mode: 'cors',
+                credentials: 'omit',
+                signal: controller ? controller.signal : undefined
+            });
+        } catch (e) {
+            setZipOverlay(true, null, 'Iniciando descarga…', overlayTitle, onCancel);
+            triggerDirectDownload(url, safeFallback);
+            setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 2500);
+            return;
+        }
+
+        if (!resp || !resp.ok) {
+            let bodyText = '';
+            try { bodyText = await resp.text(); } catch (e) { }
+            setZipOverlay(false, 100, '', overlayTitle, null);
+            alert(`No se pudo descargar.\nHTTP ${resp ? resp.status : 0}\n${bodyText}`.trim());
+            return;
+        }
+
+        const ct = (resp.headers.get('content-type') || '').toLowerCase();
+        const cd = resp.headers.get('content-disposition') || '';
+        const headerName = parseFilenameFromContentDisposition(cd);
+        const fileName = (headerName || safeFallback).replace(/[\\/]+/g, '_');
+
+        const totalHeader = (resp.headers.get('x-expected-bytes') || resp.headers.get('content-length') || '').trim();
+        const totalBytes = /^\d+$/.test(totalHeader) ? Number(totalHeader) : 0;
+
+        if (!resp.body || typeof resp.body.getReader !== 'function') {
+            setZipOverlay(true, 5, 'Iniciando descarga…', overlayTitle, onCancel);
+            triggerDirectDownload(url, fileName);
+            setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 2500);
+            return;
+        }
+
+        const reader = resp.body.getReader();
+        let received = 0;
+
+        const canUseFs = !!(window.isSecureContext && typeof window.showSaveFilePicker === 'function');
+        let chunks = null;
+        let writable = null;
+        let writeStreamClosed = false;
+        try {
+            if (canUseFs) {
+                let handle = null;
+                try {
+                    handle = await window.showSaveFilePicker({ suggestedName: fileName });
+                } catch (e) {
+                    handle = null;
+                }
+                if (handle && typeof handle.createWritable === 'function') {
+                    writable = await handle.createWritable();
+                }
+            }
+
+            if (!writable) chunks = [];
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const bytes = value && value.byteLength ? value.byteLength : 0;
+                received += bytes;
+
+                if (writable) {
+                    await writable.write(value);
+                } else if (chunks) {
+                    chunks.push(value);
+                }
+
+                const pct = totalBytes ? (received / totalBytes) * 100 : null;
+                const label = totalBytes
+                    ? `${formatFileSize(received)} / ${formatFileSize(totalBytes)}`
+                    : `${formatFileSize(received)}`;
+                setZipOverlay(true, pct, `Descargando… ${label}`, overlayTitle, onCancel);
+                await new Promise(r => setTimeout(r, 0));
+            }
+
+            if (writable) {
+                await writable.close();
+                writeStreamClosed = true;
+            } else if (chunks) {
+                const blob = new Blob(chunks, { type: ct || 'application/octet-stream' });
+                const href = URL.createObjectURL(blob);
+                triggerDirectDownload(href, fileName);
+                setTimeout(() => {
+                    try { URL.revokeObjectURL(href); } catch (e) { }
+                }, 60000);
+            }
+
+            setZipOverlay(true, 100, 'Listo.', overlayTitle, null);
+            setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 800);
+        } catch (e) {
+            try {
+                if (writable && !writeStreamClosed) await writable.close();
+            } catch (e2) { }
+
+            setZipOverlay(false, 100, '', overlayTitle, null);
+            if (e && e.name === 'AbortError') return;
+            alert(`Error descargando: ${String(e && e.message ? e.message : e)}`);
+        }
+    }
+
     window.downloadFile = function (fileId) {
         const item = (Array.isArray(currentFolderItems) ? currentFolderItems : []).find((x) => x && x.id === fileId);
         if (!item || item.type !== 'file') return;
@@ -1202,7 +1340,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
 
-        triggerDirectDownload(href, item.name);
+        downloadWithProgress(href, item.name, 'Descargando archivo…');
     };
 
     window.downloadFolder = async function (folderId, folderName) {
@@ -1212,10 +1350,9 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        const url = `${base.replace(/\/+$/, '')}/zipFolder?folderId=${encodeURIComponent(String(folderId || ''))}`;
-        setZipOverlay(true, 5, 'Preparando ZIP…');
-        triggerDirectDownload(url, (folderName ? String(folderName) : 'carpeta') + '.zip');
-        setTimeout(() => setZipOverlay(false, 100, ''), 3500);
+        const url = `${base.replace(/\/+$/, '')}/zipFolder?folderId=${encodeURIComponent(String(folderId || ''))}&ts=${Date.now()}`;
+        const name = (folderName ? String(folderName) : 'carpeta') + '.zip';
+        await downloadWithProgress(url, name, 'Descargando carpeta…');
     };
 
     // --- Admin Actions ---

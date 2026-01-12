@@ -306,6 +306,10 @@ exports.zipFolder = functions.https.onRequest(
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader(
+          "Access-Control-Expose-Headers",
+          "Content-Disposition, Content-Length, X-Expected-Bytes",
+      );
 
       if (req.method === "OPTIONS") {
         res.status(204).send("");
@@ -428,7 +432,9 @@ exports.zipFolder = functions.https.onRequest(
               const storagePath =
             normalizeString(f.storagePath) || storagePathFromDownloadUrl(f.url);
               const bucketName = normalizeString(f.bucket);
-              return {relativePath, storagePath, bucketName};
+              const rawSize =
+            Number.isFinite(f.rawSize) ? f.rawSize : Number(f.rawSize) || 0;
+              return {relativePath, storagePath, bucketName, rawSize};
             })
             .filter((f) => f.storagePath && f.relativePath)
             .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
@@ -449,6 +455,13 @@ exports.zipFolder = functions.https.onRequest(
             `attachment; filename="${zipName.replace(/"/g, "_")}"`,
         );
         res.setHeader("Cache-Control", "no-store");
+        const expectedBytes = files.reduce((acc, f) => {
+          const v = Number.isFinite(f.rawSize) ? f.rawSize : 0;
+          return acc + (v > 0 ? v : 0);
+        }, 0);
+        if (expectedBytes > 0) {
+          res.setHeader("X-Expected-Bytes", String(expectedBytes));
+        }
 
         const archive = archiver("zip", {store: true});
         archive.on("error", (err) => {
@@ -465,9 +478,13 @@ exports.zipFolder = functions.https.onRequest(
         for (const f of files) {
           const ref = await findExistingFile(f.storagePath, f.bucketName);
           if (ref) {
-            const stream = ref.createReadStream();
-            stream.on("error", (e) => archive.emit("error", e));
-            archive.append(stream, {name: f.relativePath});
+            await new Promise((resolve, reject) => {
+              const stream = ref.createReadStream();
+              stream.once("error", reject);
+              stream.once("end", resolve);
+              stream.once("close", resolve);
+              archive.append(stream, {name: f.relativePath});
+            });
           } else {
             archive.append(Buffer.from(""), {name: f.relativePath});
           }
