@@ -1156,6 +1156,70 @@ document.addEventListener('DOMContentLoaded', function () {
         if (sub && typeof text === 'string') sub.textContent = text;
     }
 
+    function ensureFolderLinksOverlay() {
+        let overlay = document.getElementById('folderLinksOverlay');
+        if (overlay) return overlay;
+
+        overlay = document.createElement('div');
+        overlay.id = 'folderLinksOverlay';
+        overlay.className = 'zip-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zip-overlay-card">
+                <div class="zip-overlay-title" id="folderLinksTitle">Descargar carpeta</div>
+                <div class="zip-overlay-sub" id="folderLinksSub">Seleccioná archivos para descargar.</div>
+                <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
+                    <button class="btn-action" id="folderLinksClose" type="button">Cerrar</button>
+                </div>
+                <div id="folderLinksList" style="margin-top:12px; max-height:55vh; overflow:auto; text-align:left;"></div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const closeBtn = overlay.querySelector('#folderLinksClose');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => overlay.classList.add('hidden'));
+        }
+
+        overlay.addEventListener('click', (e) => {
+            if (e && e.target === overlay) overlay.classList.add('hidden');
+        });
+
+        return overlay;
+    }
+
+    function showFolderLinksOverlay(folderName, items) {
+        const overlay = ensureFolderLinksOverlay();
+        const title = overlay.querySelector('#folderLinksTitle');
+        const sub = overlay.querySelector('#folderLinksSub');
+        const list = overlay.querySelector('#folderLinksList');
+
+        if (title) title.textContent = `Descargar: ${String(folderName || 'carpeta')}`;
+        if (sub) sub.textContent = `Archivos: ${items.length}`;
+
+        if (list) {
+            list.innerHTML = items.map((item) => {
+                const href = item && item.url ? String(item.url) : '';
+                const rel = item && item.relativePath ? String(item.relativePath) : '';
+                const name = item && item.name ? String(item.name) : 'archivo';
+                if (!href) {
+                    return `<div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.12);">
+                        <div>${escapeHtml(name)}</div>
+                        <div style="opacity:0.8; font-size:12px;">${escapeHtml(rel)}</div>
+                        <div style="opacity:0.8; font-size:12px;">(sin URL de descarga)</div>
+                    </div>`;
+                }
+                return `<div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.12);">
+                    <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" download style="color:inherit; text-decoration:underline;">
+                        ${escapeHtml(name)}
+                    </a>
+                    <div style="opacity:0.8; font-size:12px;">${escapeHtml(rel)}</div>
+                </div>`;
+            }).join('');
+        }
+
+        overlay.classList.remove('hidden');
+    }
+
     window.downloadFolder = async function (folderId, folderName) {
         if (!db) return;
         const folderSnap = await db.collection('files').doc(folderId).get();
@@ -1164,24 +1228,6 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!folder || folder.type !== 'folder') return;
 
         const folderFullPath = [...folder.path, folder.name];
-
-        const bucketName =
-            folder.bucket ||
-            ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
-        const rustBase = RUST_DOWNLOADS_ENABLED && typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
-        if (rustBase && bucketName) {
-            const prefix = buildUploadStoragePrefix(folderFullPath);
-            const zipUrl = `${rustBase.replace(/\/+$/, '')}/v1/zip?bucket=${encodeURIComponent(bucketName)}&prefix=${encodeURIComponent(prefix)}&name=${encodeURIComponent(folder.name)}`;
-
-            setZipOverlay(true, 5, 'Iniciando descarga…');
-            try {
-                window.open(zipUrl, '_blank', 'noopener,noreferrer');
-            } catch (e) { }
-            setTimeout(() => setZipOverlay(false, 100, ''), 2500);
-            return;
-        }
-
-        const zip = new JSZip();
 
         const items = [];
         const pendingFolders = [folderFullPath];
@@ -1208,80 +1254,16 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        const totalFiles = items.length;
-        let completedFiles = 0;
-        let failedFiles = 0;
-        setZipOverlay(true, 0, `0/${totalFiles}`);
+        const listItems = items
+            .filter((f) => f && f.type === 'file')
+            .map((f) => {
+                const relativeParts = (f.path || []).slice(folderFullPath.length);
+                const relativePath = [...relativeParts, f.name].join('/');
+                return { name: f.name, url: f.url || '', relativePath };
+            })
+            .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 
-        let cursor = 0;
-        const concurrency = Math.min(4, totalFiles);
-
-        const worker = async () => {
-            while (cursor < items.length) {
-                const idx = cursor;
-                cursor += 1;
-                const file = items[idx];
-
-                let storagePath = null;
-                let bucketName = null;
-                let proxyUrl = null;
-                try {
-                    storagePath = file.storagePath || getStoragePathFromDownloadUrl(file.url);
-                    if (!storagePath) throw new Error('Missing storagePath for download');
-
-                    bucketName = file.bucket || getBucketFromDownloadUrl(file.url) || ((firebase.app && firebase.app().options && firebase.app().options.storageBucket) ? firebase.app().options.storageBucket : '');
-                    if (!bucketName) throw new Error('Missing bucket for download');
-
-                    const rustBase = RUST_DOWNLOADS_ENABLED && typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
-                    proxyUrl = file.url;
-                    if (!proxyUrl) throw new Error('Missing url for download');
-
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 120000);
-                    const response = await fetch(proxyUrl, { mode: 'cors', signal: controller.signal });
-                    clearTimeout(timeoutId);
-                    if (!response.ok) throw new Error(`Proxy request failed (${response.status})`);
-
-                    const blob = await response.blob();
-                    const relativeParts = (file.path || []).slice(folderFullPath.length);
-                    const zipPath = [...relativeParts, file.name].join('/');
-                    zip.file(zipPath, blob, { binary: true });
-                } catch (error) {
-                    failedFiles += 1;
-                    console.error('Could not download file for zip:', {
-                        name: file.name,
-                        url: file.url,
-                        storagePath,
-                        bucketName,
-                        proxyUrl
-                    }, error);
-                } finally {
-                    completedFiles += 1;
-                    const downloadPct = (completedFiles / totalFiles) * 80;
-                    setZipOverlay(true, downloadPct, `${completedFiles}/${totalFiles}${failedFiles ? ` (fallidos: ${failedFiles})` : ''}`);
-                    await new Promise(r => setTimeout(r, 0));
-                }
-            }
-        };
-
-        try {
-            await Promise.all(Array.from({ length: concurrency }, () => worker()));
-
-            const content = await zip.generateAsync({ type: "blob", compression: "STORE", streamFiles: true }, (meta) => {
-                if (meta && typeof meta.percent === 'number') {
-                    const pct = 80 + (meta.percent * 0.2);
-                    setZipOverlay(true, pct, `Creando ZIP… ${Math.round(meta.percent)}%`);
-                }
-            });
-
-            saveAs(content, folder.name + ".zip");
-            setZipOverlay(false, 100, '');
-            console.log('ZIP generated and saved');
-        } catch (err) {
-            setZipOverlay(false, 0, '');
-            console.error('Error generating ZIP:', err);
-            alert('Error generando el ZIP: ' + err.message);
-        }
+        showFolderLinksOverlay(folder.name, listItems);
     };
 
     // --- Admin Actions ---
