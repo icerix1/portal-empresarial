@@ -1,6 +1,3 @@
-// ========================================
-// SISTEMA DE IDIOMAS
-// ========================================
 const translations = {
     es: {
         portal: 'Blog de Icerix',
@@ -145,9 +142,6 @@ function toggleLanguage() {
     updateLanguage();
 }
 
-// ========================================
-// CONFIGURACIÓN ADMIN
-// ========================================
 const ADMIN_RADIUS_METERS = 150;
 
 function decodeLocation(encoded) {
@@ -251,7 +245,6 @@ async function decryptAdminLocation(payload, password) {
     }
 }
 
-// Cargar ubicación guardada
 const savedLoc = localStorage.getItem('_adminLocEnc');
 if (savedLoc) {
     const isJson = /^\s*\{/.test(savedLoc);
@@ -262,12 +255,8 @@ if (savedLoc) {
     }
 }
 
-// ========================================
-// DOM Ready
-// ========================================
 document.addEventListener('DOMContentLoaded', function () {
 
-    // Language toggle
     const langBtn = document.getElementById('langToggle');
     if (langBtn) langBtn.addEventListener('click', toggleLanguage);
     updateLanguage();
@@ -276,9 +265,6 @@ document.addEventListener('DOMContentLoaded', function () {
         el.setAttribute('href', PAYPAL_DONATION_URL);
     });
 
-    // ========================================
-    // Triple-click en la "I" para pedir admin key
-    // ========================================
     let clickCount = 0;
     let clickTimer = null;
     const logoIcon = document.querySelector('.logo-icon');
@@ -465,9 +451,6 @@ document.addEventListener('DOMContentLoaded', function () {
         );
     }
 
-    // ========================================
-    // Admin Status
-    // ========================================
     function checkAdminStatus() {
         const adminElements = document.querySelectorAll('.admin-only');
         const adminHeaders = document.querySelectorAll('.admin-only-header');
@@ -535,9 +518,6 @@ document.addEventListener('DOMContentLoaded', function () {
         );
     }
 
-    // ========================================
-    // Navigation
-    // ========================================
     document.querySelectorAll('.nav-link').forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
@@ -580,7 +560,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const RUST_DOWNLOADS_ENABLED = false;
 
-    // Initialize Firebase
     let db, storage;
     try {
         firebase.initializeApp(config);
@@ -588,7 +567,6 @@ document.addEventListener('DOMContentLoaded', function () {
         storage = firebase.storage();
         try { db.enablePersistence({ synchronizeTabs: true }).catch(() => { }); } catch (e) { }
 
-        // Hide warning if successful
         const warning = document.getElementById('firebase-warning');
         if (warning) warning.style.display = 'none';
         console.log("Firebase initialized successfully");
@@ -598,7 +576,6 @@ document.addEventListener('DOMContentLoaded', function () {
         if (warning) warning.style.display = 'flex';
     }
 
-    // State
     let currentPath = [];
     let currentPathKey = '';
     let currentFolderItems = [];
@@ -737,7 +714,6 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!db || listenersStarted) return;
         listenersStarted = true;
 
-        // Mostrar indicadores de carga
         const blogsContainer = document.getElementById('blogsContainer');
         if (blogsContainer) blogsContainer.innerHTML = '<p class="loading-message">🔄 Cargando publicaciones...</p>';
 
@@ -765,9 +741,6 @@ document.addEventListener('DOMContentLoaded', function () {
         listenersStarted = false;
     }
 
-    // ========================================
-    // File Management (Firebase)
-    // ========================================
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const folderInput = document.getElementById('folderInput');
@@ -794,7 +767,6 @@ document.addEventListener('DOMContentLoaded', function () {
         return true;
     }
 
-    // --- Drop Zone Listeners ---
     if (dropZone) {
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
         dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -810,7 +782,6 @@ document.addEventListener('DOMContentLoaded', function () {
     if (fileInput) fileInput.addEventListener('change', (e) => { handleFiles(e.target.files); });
     if (folderInput) folderInput.addEventListener('change', (e) => { handleFiles(e.target.files); });
 
-    // --- File Processing ---
     function processItems(items) {
         if (!isAdmin) return;
         let entryPromises = [];
@@ -822,7 +793,6 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
         Promise.all(entryPromises).then(() => {
-            // No need to call saveFiles or renderFiles here, onSnapshot will handle it
         });
     }
 
@@ -1146,7 +1116,6 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    // --- Rendering ---
     function calculateFolderSize(folder) {
         const p = Array.isArray(folder.path) ? folder.path : [];
         const folderFullPath = [...p, folder.name];
@@ -1184,13 +1153,10 @@ document.addEventListener('DOMContentLoaded', function () {
         const breadcrumbs = document.getElementById('breadcrumbs');
         if (!filesContainer) return;
 
-        // Breadcrumbs
         renderBreadcrumbs(breadcrumbs);
 
-        // Filter items for current path
         const items = currentFolderItems.slice();
 
-        // Sort: Folders first, then files
         items.sort((a, b) => {
             if (a.type === b.type) return a.name.localeCompare(b.name);
             return a.type === 'folder' ? -1 : 1;
@@ -1262,7 +1228,6 @@ document.addEventListener('DOMContentLoaded', function () {
         container.innerHTML = html;
     }
 
-    // --- Navigation Actions ---
     window.navigateBack = function () {
         if (currentPath.length === 0) return;
         setCurrentPath(currentPath.slice(0, -1));
@@ -1283,7 +1248,6 @@ document.addEventListener('DOMContentLoaded', function () {
         window.renderFiles();
     };
 
-    // --- Download ---
     function getBucketFromDownloadUrl(url) {
         if (!url || typeof url !== 'string') return null;
         const match = url.match(/\/b\/([^/]+)\/o\//);
@@ -1595,7 +1559,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     startRealtimeListeners();
 
-    // --- Admin Actions ---
     window.deleteItem = function (id) {
         if (!isAdmin) return;
         if (!db) return;
@@ -1669,10 +1632,6 @@ document.addEventListener('DOMContentLoaded', function () {
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
-
-    // ========================================
-    // Blog Management (Firebase)
-    // ========================================
 
     window.publishBlog = function () {
         if (!isAdmin) {
@@ -2028,9 +1987,6 @@ document.addEventListener('DOMContentLoaded', function () {
         const post = blogPosts.find(p => p.firebaseId === firebaseId);
         if (!post) return;
 
-        // Need to read current comments, splice, update (primitive way but simple for array)
-        // Better way: unique ID for comments, but arrayUnion/Remove needs exact object match
-        // We'll just update the whole array
         const newComments = [...post.comments];
         newComments.splice(idx, 1);
 
@@ -2048,8 +2004,5 @@ document.addEventListener('DOMContentLoaded', function () {
         return div.innerHTML;
     }
 
-    // ========================================
-    // Init
-    // ========================================
     checkLocationOnLoad();
 });

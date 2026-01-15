@@ -1,6 +1,3 @@
-/* ========================================
-   Variables y Reset
-   ======================================== */
 :root {
     --primary: #1a56db;
     --primary-hover: #1e40af;
@@ -35,9 +32,6 @@ body {
     flex-direction: column;
 }
 
-/* ========================================
-   Progress Bar & Loading
-   ======================================== */
 .upload-progress {
     display: flex;
     align-items: center;
@@ -128,9 +122,6 @@ body {
     color: var(--text-muted);
 }
 
-/* ========================================
-   Header
-   ======================================== */
 .header {
     background: var(--white);
     border-bottom: 1px solid var(--border);
@@ -220,9 +211,6 @@ body {
     background: var(--border);
 }
 
-/* ========================================
-   Admin Banner
-   ======================================== */
 .admin-banner {
     background: #059669;
     color: white;
@@ -248,9 +236,6 @@ body {
     display: none !important;
 }
 
-/* ========================================
-   Main Content
-   ======================================== */
 .main {
     flex: 1;
     padding: 2rem 0;
@@ -312,9 +297,6 @@ body {
     margin: 0.5rem 0 1rem;
 }
 
-/* ========================================
-   Cards
-   ======================================== */
 .card {
     background: var(--white);
     border: 1px solid var(--border);
@@ -360,9 +342,6 @@ body {
     padding: 1.5rem;
 }
 
-/* ========================================
-   Upload Area
-   ======================================== */
 .upload-area {
     border: 2px dashed var(--border-dark);
     border-radius: var(--radius);
@@ -397,9 +376,6 @@ body {
     margin-bottom: 1rem;
 }
 
-/* ========================================
-   Upload Actions
-   ======================================== */
 .upload-actions {
     display: flex;
     gap: 1rem;
@@ -417,9 +393,6 @@ body {
     background: rgba(26, 86, 219, 0.05);
 }
 
-/* ========================================
-   Buttons
-   ======================================== */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -454,9 +427,6 @@ body {
     background: rgba(220, 38, 38, 0.1);
 }
 
-/* ========================================
-   Table
-   ======================================== */
 .table-container {
     overflow-x: auto;
 }
@@ -500,9 +470,6 @@ body {
     font-weight: 500;
 }
 
-/* ========================================
-   Form
-   ======================================== */
 .form-group {
     margin-bottom: 1.25rem;
 }
@@ -547,9 +514,6 @@ textarea.form-control {
     padding-top: 0.5rem;
 }
 
-/* ========================================
-   Posts List
-   ======================================== */
 .posts-list {
     display: flex;
     flex-direction: column;
@@ -604,9 +568,6 @@ textarea.form-control {
     padding: 2rem;
 }
 
-/* ========================================
-   Comments Section
-   ======================================== */
 .comments-section {
     border-top: 1px solid var(--border);
     padding-top: 1rem;
@@ -713,9 +674,6 @@ textarea.form-control {
     font-size: 0.85rem;
 }
 
-/* ========================================
-   Footer
-   ======================================== */
 .footer {
     background: var(--white);
     border-top: 1px solid var(--border);
@@ -735,9 +693,6 @@ textarea.form-control {
     font-size: 0.9rem;
 }
 
-/* ========================================
-   Flex Headers
-   ======================================== */
 .headers-flex {
     display: flex;
     justify-content: space-between;
@@ -749,9 +704,6 @@ textarea.form-control {
     font-size: 0.8rem;
 }
 
-/* ========================================
-   Breadcrumbs
-   ======================================== */
 .breadcrumbs {
     display: flex;
     align-items: center;
@@ -788,9 +740,6 @@ textarea.form-control {
     text-decoration: none;
 }
 
-/* ========================================
-   Table & Icons
-   ======================================== */
 .file-icon {
     margin-right: 0.5rem;
     font-size: 1.1rem;
@@ -858,9 +807,6 @@ textarea.form-control {
     margin-right: 0.5rem;
 }
 
-/* ========================================
-   Responsive
-   ======================================== */
 @media (max-width: 640px) {
     .header-container {
         flex-direction: column;
