@@ -53,9 +53,6 @@ const translations = {
         donatePaypal: 'Donaciones por PayPal',
         back: 'Volver',
         translationMissing: 'Sin traducción disponible',
-        linkApp: 'Linkear App en el post',
-        refreshApps: 'Actualizar',
-        insertAppLink: 'Insertar link',
     },
     en: {
         portal: "Icerix's blog",
@@ -108,9 +105,6 @@ const translations = {
         donatePaypal: 'Donate via PayPal',
         back: 'Back',
         translationMissing: 'No translation available',
-        linkApp: 'Link an App in the post',
-        refreshApps: 'Refresh',
-        insertAppLink: 'Insert link',
     }
 };
 
@@ -278,63 +272,31 @@ document.addEventListener('DOMContentLoaded', function () {
     if (langBtn) langBtn.addEventListener('click', toggleLanguage);
     updateLanguage();
 
-    function ensureBlogAppSelector() {
-        const form = document.getElementById('blogForm');
-        if (!form) return null;
-
-        const existing = document.getElementById('blogAppSelect');
-        if (existing) {
-            try {
-                const wrapper = existing.closest('.form-group');
-                if (wrapper) wrapper.style.display = '';
-            } catch (e) { }
-            return existing;
-        }
-
-        const contentEn = document.getElementById('blogContentEn');
-        if (!contentEn) return null;
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'form-group';
-        wrapper.innerHTML = `
-            <label for="blogAppSelect" data-i18n="linkApp">${escapeHtml(t('linkApp'))}</label>
-            <div class="upload-actions" style="justify-content:flex-start;">
-                <select id="blogAppSelect" class="form-control" style="flex:1; min-width:220px;"></select>
-                <button type="button" class="btn btn-outline" onclick="refreshPostApps()" data-i18n="refreshApps">${escapeHtml(t('refreshApps'))}</button>
-                <button type="button" class="btn btn-primary" onclick="insertSelectedPostAppLink()" data-i18n="insertAppLink">${escapeHtml(t('insertAppLink'))}</button>
-            </div>
-        `;
-
-        const next = contentEn.closest('.form-group');
-        if (next && next.parentNode) next.parentNode.insertBefore(wrapper, next.nextSibling);
-        else form.appendChild(wrapper);
-
-        updateLanguage();
-        return document.getElementById('blogAppSelect');
-    }
-
-    try { ensureBlogAppSelector(); } catch (e) { }
-
     document.querySelectorAll('[data-paypal-donate]').forEach((el) => {
         el.setAttribute('href', PAYPAL_DONATION_URL);
     });
 
     // ========================================
-    // Triple-click en logo para setup admin
+    // Triple-click en la "I" para pedir admin key
     // ========================================
     let clickCount = 0;
     let clickTimer = null;
-    const logo = document.querySelector('.logo');
+    const logoIcon = document.querySelector('.logo-icon');
 
-    if (logo) {
-        logo.addEventListener('click', () => {
+    if (logoIcon) {
+        logoIcon.addEventListener('click', () => {
             clickCount++;
             if (clickTimer) clearTimeout(clickTimer);
             clickTimer = setTimeout(() => { clickCount = 0; }, 600);
 
             if (clickCount >= 3) {
                 clickCount = 0;
-                setupAdminLocation();
+                Promise.resolve().then(async () => {
+                    const key = await getAdminApiKey();
+                    if (!key) return;
+                    isAdmin = true;
+                    checkAdminStatus();
+                });
             }
         });
     }
@@ -537,30 +499,15 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function checkLocationOnLoad() {
-        if (!adminLocation && adminLocationCipher) {
-            const password = await getAdminApiKey();
-            if (!password) {
+        try {
+            const existing = sessionStorage.getItem('_adminApiKey') || '';
+            if (existing && String(existing).trim()) {
+                isAdmin = true;
                 checkAdminStatus();
                 return;
             }
-            const loc = await decryptAdminLocation(adminLocationCipher, password);
-            if (!loc) {
-                alert('No se pudo desbloquear la ubicación admin.');
-                checkAdminStatus();
-                return;
-            }
-            adminLocation = loc;
-        }
-        if (adminLocation && !adminLocationCipher && crypto && crypto.subtle) {
-            const password = await getAdminApiKey();
-            if (password) {
-                try {
-                    const encrypted = await encryptAdminLocation(adminLocation, password);
-                    localStorage.setItem('_adminLocEnc', encrypted);
-                    adminLocationCipher = encrypted;
-                } catch (e) { }
-            }
-        }
+        } catch (e) { }
+
         if (!adminLocation || !navigator.geolocation) {
             checkAdminStatus();
             return;
@@ -601,13 +548,6 @@ document.addEventListener('DOMContentLoaded', function () {
             link.classList.add('active');
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById(tabName).classList.add('active');
-
-            if (tabName === 'blogs') {
-                Promise.resolve().then(() => {
-                    ensureBlogAppSelector();
-                    return loadPostAppsIntoSelect(true);
-                }).catch(() => { });
-            }
         });
     });
 
@@ -1734,166 +1674,6 @@ document.addEventListener('DOMContentLoaded', function () {
     // Blog Management (Firebase)
     // ========================================
 
-    let lastFocusedBlogContentId = 'blogContentEs';
-    const postAppsById = new Map();
-    let lastPostAppsLoadAt = 0;
-
-    function getBlogContentTarget() {
-        const tryGet = (id) => {
-            const el = document.getElementById(id);
-            return el && typeof el.value === 'string' ? el : null;
-        };
-        return tryGet(lastFocusedBlogContentId) || tryGet('blogContentEs') || tryGet('blogContentEn');
-    }
-
-    async function downloadFileFromItem(item) {
-        if (!item || item.type !== 'file') return;
-
-        const bucketDefault = (firebase.app && firebase.app().options && firebase.app().options.storageBucket)
-            ? firebase.app().options.storageBucket
-            : '';
-        const functionsBase = getFunctionsBaseUrl();
-        const downloadProxyBase = functionsBase ? functionsBase.replace(/\/+$/, '') + '/downloadProxy' : '';
-
-        let href = item && item.url ? String(item.url) : '';
-        const storagePath = item.storagePath || getStoragePathFromDownloadUrl(href);
-        const bucketName = item.bucket || getBucketFromDownloadUrl(href) || bucketDefault;
-        const useProxy = !!(downloadProxyBase && storagePath);
-        if (useProxy) {
-            href = `${downloadProxyBase}?bucket=${encodeURIComponent(bucketName || '')}&filePath=${encodeURIComponent(storagePath)}`;
-        }
-
-        await downloadWithProgress(href, item.name || 'app', currentLang === 'es' ? 'Descargando…' : 'Downloading…');
-    }
-
-    async function openPostAppById(appId) {
-        const id = String(appId || '').trim();
-        if (!id) return;
-
-        let item = postAppsById.get(id) || null;
-        if (!item && db) {
-            try {
-                const snap = await db.collection('files').doc(id).get();
-                if (snap && snap.exists) {
-                    item = { id: snap.id, ...snap.data() };
-                    postAppsById.set(id, item);
-                }
-            } catch (e) { }
-        }
-
-        if (!item || !item.type) {
-            alert(currentLang === 'es' ? 'No se encontró esa App.' : 'App not found.');
-            return;
-        }
-
-        if (item.type === 'folder') {
-            await window.downloadFolder(item.id, item.name || 'carpeta');
-            return;
-        }
-        await downloadFileFromItem(item);
-    }
-
-    async function loadPostAppsIntoSelect(force) {
-        const select = document.getElementById('blogAppSelect');
-        if (!select) return;
-        if (!db) {
-            select.innerHTML = '';
-            const opt = document.createElement('option');
-            opt.value = '';
-            opt.textContent = currentLang === 'es' ? 'Firebase no configurado' : 'Firebase not configured';
-            select.appendChild(opt);
-            return;
-        }
-
-        const now = Date.now();
-        if (!force && lastPostAppsLoadAt && now - lastPostAppsLoadAt < 30_000 && select.options.length > 0) return;
-
-        select.disabled = true;
-        select.innerHTML = '';
-        const loadingOpt = document.createElement('option');
-        loadingOpt.value = '';
-        loadingOpt.textContent = currentLang === 'es' ? 'Cargando…' : 'Loading…';
-        select.appendChild(loadingOpt);
-
-        let filesSnap = null;
-        let foldersSnap = null;
-        try {
-            [filesSnap, foldersSnap] = await Promise.all([
-                db.collection('files').where('type', '==', 'file').limit(300).get().catch(() => null),
-                db.collection('files').where('type', '==', 'folder').limit(200).get().catch(() => null),
-            ]);
-        } catch (e) {
-            filesSnap = null;
-            foldersSnap = null;
-        }
-
-        const items = [];
-        if (filesSnap && filesSnap.docs) {
-            filesSnap.docs.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
-        }
-        if (foldersSnap && foldersSnap.docs) {
-            foldersSnap.docs.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
-        }
-
-        items.sort((a, b) => {
-            const pa = Array.isArray(a.path) ? a.path.join('/') : '';
-            const pb = Array.isArray(b.path) ? b.path.join('/') : '';
-            if (pa !== pb) return pa.localeCompare(pb);
-            const na = String(a.name || '');
-            const nb = String(b.name || '');
-            return na.localeCompare(nb);
-        });
-
-        select.innerHTML = '';
-        const firstOpt = document.createElement('option');
-        firstOpt.value = '';
-        firstOpt.textContent = currentLang === 'es' ? 'Elegí una App…' : 'Pick an App…';
-        select.appendChild(firstOpt);
-
-        items.forEach((item) => {
-            if (!item || !item.id || !item.name || !item.type) return;
-            postAppsById.set(item.id, item);
-            const icon = item.type === 'folder' ? '📁' : '📄';
-            const p = Array.isArray(item.path) ? item.path.join('/') : '';
-            const full = (p ? p + '/' : '') + String(item.name);
-            const opt = document.createElement('option');
-            opt.value = item.id;
-            opt.textContent = `${icon} ${full}`;
-            select.appendChild(opt);
-        });
-
-        lastPostAppsLoadAt = Date.now();
-        select.disabled = false;
-    }
-
-    window.refreshPostApps = function () {
-        return loadPostAppsIntoSelect(true);
-    };
-
-    window.insertSelectedPostAppLink = function () {
-        const select = document.getElementById('blogAppSelect');
-        if (!select) return;
-        const id = String(select.value || '').trim();
-        if (!id) return;
-        const item = postAppsById.get(id) || null;
-        const label = item && item.name ? String(item.name) : id;
-        const token = `[[app:${id}|${label.replace(/\]/g, '')}]]`;
-
-        const target = getBlogContentTarget();
-        if (!target) return;
-
-        const start = typeof target.selectionStart === 'number' ? target.selectionStart : target.value.length;
-        const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : target.value.length;
-        const before = target.value.slice(0, start);
-        const after = target.value.slice(end);
-        target.value = before + token + after;
-        try {
-            const nextPos = before.length + token.length;
-            target.focus();
-            target.setSelectionRange(nextPos, nextPos);
-        } catch (e) { }
-    };
-
     window.publishBlog = function () {
         if (!isAdmin) {
             alert(currentLang === 'es' ? 'Activá modo admin para publicar.' : 'Enable admin mode to publish.');
@@ -1936,21 +1716,6 @@ document.addEventListener('DOMContentLoaded', function () {
     window.renderBlogs = function () {
         const blogsContainer = document.getElementById('blogsContainer');
         if (!blogsContainer) return;
-
-        try { ensureBlogAppSelector(); } catch (e) { }
-
-        try {
-            const esEl = document.getElementById('blogContentEs');
-            const enEl = document.getElementById('blogContentEn');
-            if (esEl && !esEl.__trackFocus) {
-                esEl.__trackFocus = true;
-                esEl.addEventListener('focus', () => { lastFocusedBlogContentId = 'blogContentEs'; });
-            }
-            if (enEl && !enEl.__trackFocus) {
-                enEl.__trackFocus = true;
-                enEl.addEventListener('focus', () => { lastFocusedBlogContentId = 'blogContentEn'; });
-            }
-        } catch (e) { }
 
         try {
             blogPosts.forEach((post) => {
@@ -2015,26 +1780,12 @@ document.addEventListener('DOMContentLoaded', function () {
         const renderPostContentHtml = (raw) => {
             const text = String(raw || '');
             if (!text) return '';
-            const re = /\[\[app:([A-Za-z0-9_-]+)(?:\|([^\]]*))?\]\]/g;
-            let out = '';
-            let last = 0;
-            let m = null;
-            while ((m = re.exec(text)) !== null) {
-                const before = text.slice(last, m.index);
-                out += escapeHtml(before).replace(/\n/g, '<br>');
-
-                const id = String(m[1] || '').trim();
-                let label = (m[2] != null ? String(m[2]) : '').trim();
-                if (!label) {
-                    const cached = postAppsById.get(id) || null;
-                    label = cached && cached.name ? String(cached.name) : id;
-                }
-
-                out += `<a href="#" class="post-app-link" data-app-id="${id}">${escapeHtml(label)}</a>`;
-                last = m.index + m[0].length;
-            }
-            out += escapeHtml(text.slice(last)).replace(/\n/g, '<br>');
-            return out;
+            const cleaned = text.replace(/\[\[app:([A-Za-z0-9_-]+)(?:\|([^\]]*))?\]\]/g, (_, id, label) => {
+                const lbl = (label != null ? String(label) : '').trim();
+                const fallback = String(id || '').trim();
+                return lbl || fallback;
+            });
+            return escapeHtml(cleaned).replace(/\n/g, '<br>');
         };
 
         blogsContainer.innerHTML = blogPosts.map((post) => {
@@ -2076,18 +1827,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }).join('');
 
         try {
-            blogsContainer.querySelectorAll('a.post-app-link').forEach((el) => {
-                if (el.__postAppBound) return;
-                el.__postAppBound = true;
-                el.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const id = el.getAttribute('data-app-id') || '';
-                    Promise.resolve().then(() => openPostAppById(id));
-                });
-            });
-        } catch (e) { }
-
-        try {
             blogPosts.forEach((post) => {
                 const postDocId = typeof post.firebaseId === 'string' ? post.firebaseId.trim() : '';
                 const postKey = postDocId || String(post.id || post.createdAt || '');
@@ -2110,8 +1849,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
             });
         } catch (e) { }
-
-        Promise.resolve().then(() => loadPostAppsIntoSelect(false)).catch(() => { });
     };
 
     window.handleComment = function (e, a, b) {
