@@ -605,7 +605,9 @@ document.addEventListener('DOMContentLoaded', function () {
             if (user) {
                 setAuthOverlay(false);
                 if (logoutBtn) logoutBtn.classList.remove('hidden');
+                startRealtimeListeners();
             } else {
+                stopRealtimeListeners();
                 setAuthOverlay(true);
                 if (logoutBtn) logoutBtn.classList.add('hidden');
             }
@@ -626,6 +628,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let permissionAlertShown = false;
     let activeUploadSession = null;
     let filesUnsubscribe = null;
+    let postsUnsubscribe = null;
     let renderFilesQueued = false;
     let renderBlogsQueued = false;
 
@@ -742,7 +745,7 @@ document.addEventListener('DOMContentLoaded', function () {
         console.error("Firestore listener error:", error);
         if (!permissionAlertShown && error && error.code === 'permission-denied') {
             permissionAlertShown = true;
-            alert('FirebaseError: Missing or insufficient permissions. Revisa las reglas de Firestore y/o habilita Anonymous Auth.');
+            alert('No tenés permisos para leer Firestore. Revisá las reglas de Firestore (y asegurate de estar logueado).');
         }
     }
 
@@ -757,7 +760,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!currentPathKey) setCurrentPath([]);
         subscribeFilesForCurrentPath();
 
-        db.collection('posts').orderBy('id', 'desc').onSnapshot(
+        postsUnsubscribe = db.collection('posts').orderBy('id', 'desc').onSnapshot(
             (snapshot) => {
                 blogPosts = snapshot.docs.map((doc) => ({ ...doc.data(), firebaseId: doc.id }));
                 queueRenderBlogs();
@@ -765,17 +768,17 @@ document.addEventListener('DOMContentLoaded', function () {
             handleListenerError
         );
     }
-
-    if (db && firebase.auth) {
-        const auth = firebase.auth();
-        auth.onAuthStateChanged((user) => {
-            if (user) startRealtimeListeners();
-        });
-        auth.signInAnonymously().catch((error) => {
-            console.error("Anonymous sign-in failed:", error);
-        });
-    } else {
-        startRealtimeListeners();
+    
+    function stopRealtimeListeners() {
+        if (typeof filesUnsubscribe === 'function') {
+            try { filesUnsubscribe(); } catch (e) { }
+        }
+        filesUnsubscribe = null;
+        if (typeof postsUnsubscribe === 'function') {
+            try { postsUnsubscribe(); } catch (e) { }
+        }
+        postsUnsubscribe = null;
+        listenersStarted = false;
     }
 
     // ========================================
