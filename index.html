@@ -21,7 +21,7 @@
                 <span class="logo-text" data-i18n="portal">Icerix's blog</span>
             </div>
             <nav class="nav">
-                <a href="#" class="nav-link active" data-tab="archivos" data-i18n="documents">Documentos</a>
+                <a href="#" class="nav-link active" data-tab="archivos" data-i18n="documents">Apps</a>
                 <a href="#" class="nav-link" data-tab="blogs" data-i18n="publications">Publicaciones</a>
                 <button class="btn-lang" id="langToggle" title="Change language">
                     🌐 <span id="currentLang">EN</span>
@@ -40,8 +40,8 @@
             <!-- Sección de Documentos -->
             <section id="archivos" class="tab-content active">
                 <div class="page-header">
-                    <h1 data-i18n="docManagement">Gestión de Documentos</h1>
-                    <p data-i18n="filesAvailable">Archivos disponibles para descarga</p>
+                    <h1 data-i18n="docManagement">Gestión de Apps</h1>
+                    <p data-i18n="filesAvailable">Apps disponibles para descarga</p>
                 </div>
 
                 <div class="card admin-only" id="uploadCard">
@@ -81,7 +81,7 @@
 
                 <div class="card card-files">
                     <div class="card-header card-header-center">
-                        <h2 data-i18n="availableFiles">Archivos Disponibles</h2>
+                        <h2 data-i18n="availableFiles">Apps Disponibles</h2>
                     </div>
                     <div class="card-body">
                         <div class="breadcrumbs" id="breadcrumbs"></div>
@@ -97,7 +97,7 @@
                                 </thead>
                                 <tbody id="filesContainer">
                                     <tr class="empty-row">
-                                        <td colspan="4" data-i18n="noFiles">No hay archivos disponibles</td>
+                                        <td colspan="4" data-i18n="noFiles">No hay Apps disponibles</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -138,6 +138,14 @@
                                 <label for="blogContentEn" data-i18n="contentEn">Content (EN)</label>
                                 <textarea id="blogContentEn" class="form-control" rows="5"
                                     data-i18n-placeholder="writeContentEn"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="blogAppSelect" data-i18n="linkApp">Linkear App en el post</label>
+                                <div class="upload-actions" style="justify-content:flex-start;">
+                                    <select id="blogAppSelect" class="form-control" style="flex:1; min-width:220px;"></select>
+                                    <button type="button" class="btn btn-outline" onclick="refreshPostApps()" data-i18n="refreshApps">Actualizar</button>
+                                    <button type="button" class="btn btn-primary" onclick="insertSelectedPostAppLink()" data-i18n="insertAppLink">Insertar link</button>
+                                </div>
                             </div>
                             <div class="form-actions">
                                 <button type="button" class="btn btn-primary" onclick="publishBlog()"
@@ -187,7 +195,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-storage-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-functions-compat.js"></script>
 
-    <script src="script.js?v=20260115_0001"></script>
+    <script src="script.js?v=20260115_0002"></script>
 </body>
 
 </html>

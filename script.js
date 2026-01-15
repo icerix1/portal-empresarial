@@ -4,21 +4,21 @@
 const translations = {
     es: {
         portal: 'Blog de Icerix',
-        documents: 'Documentos',
+        documents: 'Apps',
         publications: 'Publicaciones',
         adminMode: '🔐 Modo Administrador activo',
-        docManagement: 'Gestión de Documentos',
-        filesAvailable: 'Archivos disponibles para descarga',
-        uploadFile: 'Subir Archivo',
-        dragFiles: 'Arrastre sus archivos aquí',
+        docManagement: 'Gestión de Apps',
+        filesAvailable: 'Apps disponibles para descarga',
+        uploadFile: 'Subir App',
+        dragFiles: 'Arrastre sus Apps aquí',
         orClickSelect: 'o haga clic para seleccionar',
-        selectFile: 'Seleccionar Archivo',
-        availableFiles: 'Archivos Disponibles',
+        selectFile: 'Seleccionar App',
+        availableFiles: 'Apps Disponibles',
         name: 'Nombre',
         size: 'Tamaño',
         date: 'Fecha',
         actions: 'Acciones',
-        noFiles: 'No hay archivos disponibles',
+        noFiles: 'No hay Apps disponibles',
         newsContent: 'Contenido y novedades',
         newPost: 'Nueva Publicación',
         titleEs: 'Título (ES)',
@@ -48,29 +48,32 @@ const translations = {
         writeCommentAlert: 'Escribe un comentario',
         selectFolder: 'Subir Carpeta',
         deleteAll: 'Eliminar Todo',
-        deleteAllConfirm: '¿Estás seguro de que quieres eliminar TODOS los archivos? Esta acción no se puede deshacer.',
+        deleteAllConfirm: '¿Estás seguro de que quieres eliminar TODAS las Apps? Esta acción no se puede deshacer.',
         download: 'Descargar',
         donatePaypal: 'Donaciones por PayPal',
         back: 'Volver',
         translationMissing: 'Sin traducción disponible',
+        linkApp: 'Linkear App en el post',
+        refreshApps: 'Actualizar',
+        insertAppLink: 'Insertar link',
     },
     en: {
         portal: "Icerix's blog",
-        documents: 'Documents',
+        documents: 'Apps',
         publications: 'Publications',
         adminMode: '🔐 Administrator Mode active',
-        docManagement: 'Document Management',
-        filesAvailable: 'Files available for download',
-        uploadFile: 'Upload File',
-        dragFiles: 'Drag your files here',
+        docManagement: 'Apps',
+        filesAvailable: 'Apps available for download',
+        uploadFile: 'Upload App',
+        dragFiles: 'Drag your Apps here',
         orClickSelect: 'or click to select',
-        selectFile: 'Select File',
-        availableFiles: 'Available Files',
+        selectFile: 'Select App',
+        availableFiles: 'Available Apps',
         name: 'Name',
         size: 'Size',
         date: 'Date',
         actions: 'Actions',
-        noFiles: 'No files available',
+        noFiles: 'No Apps available',
         newsContent: 'News and updates',
         newPost: 'New Post',
         titleEs: 'Title (ES)',
@@ -100,11 +103,14 @@ const translations = {
         writeCommentAlert: 'Please write a comment',
         selectFolder: 'Upload Folder',
         deleteAll: 'Delete All',
-        deleteAllConfirm: 'Are you sure you want to delete ALL files? This action cannot be undone.',
+        deleteAllConfirm: 'Are you sure you want to delete ALL Apps? This action cannot be undone.',
         download: 'Download',
         donatePaypal: 'Donate via PayPal',
         back: 'Back',
-        translationMissing: 'No translation available'
+        translationMissing: 'No translation available',
+        linkApp: 'Link an App in the post',
+        refreshApps: 'Refresh',
+        insertAppLink: 'Insert link',
     }
 };
 
@@ -166,6 +172,7 @@ function encodeLocation(lat, lon) {
 
 let isAdmin = false;
 let adminLocation = null;
+let adminLocationCipher = null;
 
 function isAdminOverrideEnabled() {
     try {
@@ -181,10 +188,84 @@ function setAdminOverrideEnabled(enabled) {
     } catch (e) { }
 }
 
+function bytesToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+    const binary = atob(String(base64 || ''));
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+}
+
+async function deriveAdminCryptoKey(password, saltBytes) {
+    const pw = String(password || '');
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        enc.encode(pw),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: saltBytes, iterations: 200000, hash: 'SHA-256' },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+}
+
+async function encryptAdminLocation(location, password) {
+    if (!crypto || !crypto.subtle) throw new Error('crypto-missing');
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveAdminCryptoKey(password, salt);
+    const plain = new TextEncoder().encode(`${location.lat}|${location.lon}`);
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain);
+    return JSON.stringify({
+        v: 2,
+        s: bytesToBase64(salt),
+        iv: bytesToBase64(iv),
+        ct: bytesToBase64(new Uint8Array(ct))
+    });
+}
+
+async function decryptAdminLocation(payload, password) {
+    if (!crypto || !crypto.subtle) return null;
+    let obj = null;
+    try { obj = JSON.parse(String(payload || '')); } catch (e) { obj = null; }
+    if (!obj || obj.v !== 2 || !obj.s || !obj.iv || !obj.ct) return null;
+    const salt = base64ToBytes(obj.s);
+    const iv = base64ToBytes(obj.iv);
+    const ct = base64ToBytes(obj.ct);
+    const key = await deriveAdminCryptoKey(password, salt);
+    try {
+        const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+        const text = new TextDecoder().decode(new Uint8Array(pt));
+        const parts = String(text || '').split('|');
+        const lat = parseFloat(parts[0]);
+        const lon = parseFloat(parts[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+        return { lat, lon };
+    } catch (e) {
+        return null;
+    }
+}
+
 // Cargar ubicación guardada
 const savedLoc = localStorage.getItem('_adminLocEnc');
 if (savedLoc) {
-    adminLocation = decodeLocation(savedLoc);
+    const isJson = /^\s*\{/.test(savedLoc);
+    if (isJson) {
+        adminLocationCipher = savedLoc;
+    } else {
+        adminLocation = decodeLocation(savedLoc);
+    }
 }
 
 // ========================================
@@ -282,15 +363,10 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function setupAdminLocation() {
-        const password = await requestAdminSetupCode();
-        if (password == null) return;
-        if (password !== 'setup2026') {
-            alert('Código incorrecto');
-            return;
-        }
+        const password = await getAdminApiKey();
+        if (!password) return;
 
         if (!navigator.geolocation) {
-            setAdminOverrideEnabled(true);
             isAdmin = true;
             checkAdminStatus();
             alert('✅ Modo admin activado.\n\nTu navegador no soporta geolocalización.');
@@ -298,19 +374,20 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const encoded = encodeLocation(position.coords.latitude, position.coords.longitude);
-                localStorage.setItem('_adminLocEnc', encoded);
-                adminLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
+            async (position) => {
+                const loc = { lat: position.coords.latitude, lon: position.coords.longitude };
+                try {
+                    const encrypted = await encryptAdminLocation(loc, password);
+                    localStorage.setItem('_adminLocEnc', encrypted);
+                    adminLocationCipher = encrypted;
+                } catch (e) { }
+                adminLocation = loc;
                 isAdmin = true;
-                setAdminOverrideEnabled(true);
 
                 checkAdminStatus();
                 alert('✅ Ubicación admin guardada!\n\nAhora eres admin.');
-                console.log('Código encriptado:', encoded);
             },
             (error) => {
-                setAdminOverrideEnabled(true);
                 isAdmin = true;
                 checkAdminStatus();
                 const msg =
@@ -356,11 +433,30 @@ document.addEventListener('DOMContentLoaded', function () {
         return R * c;
     }
 
-    function checkLocationOnLoad() {
-        if (isAdminOverrideEnabled()) {
-            isAdmin = true;
-            checkAdminStatus();
-            return;
+    async function checkLocationOnLoad() {
+        if (!adminLocation && adminLocationCipher) {
+            const password = await getAdminApiKey();
+            if (!password) {
+                checkAdminStatus();
+                return;
+            }
+            const loc = await decryptAdminLocation(adminLocationCipher, password);
+            if (!loc) {
+                alert('No se pudo desbloquear la ubicación admin.');
+                checkAdminStatus();
+                return;
+            }
+            adminLocation = loc;
+        }
+        if (adminLocation && !adminLocationCipher && crypto && crypto.subtle) {
+            const password = await getAdminApiKey();
+            if (password) {
+                try {
+                    const encrypted = await encryptAdminLocation(adminLocation, password);
+                    localStorage.setItem('_adminLocEnc', encrypted);
+                    adminLocationCipher = encrypted;
+                } catch (e) { }
+            }
         }
         if (!adminLocation || !navigator.geolocation) {
             checkAdminStatus();
@@ -1459,6 +1555,167 @@ document.addEventListener('DOMContentLoaded', function () {
     // Blog Management (Firebase)
     // ========================================
 
+    let lastFocusedBlogContentId = 'blogContentEs';
+    const postAppsById = new Map();
+    let lastPostAppsLoadAt = 0;
+
+    function getBlogContentTarget() {
+        const tryGet = (id) => {
+            const el = document.getElementById(id);
+            return el && typeof el.value === 'string' ? el : null;
+        };
+        return tryGet(lastFocusedBlogContentId) || tryGet('blogContentEs') || tryGet('blogContentEn');
+    }
+
+    async function downloadFileFromItem(item) {
+        if (!item || item.type !== 'file') return;
+
+        const bucketDefault = (firebase.app && firebase.app().options && firebase.app().options.storageBucket)
+            ? firebase.app().options.storageBucket
+            : '';
+        const functionsBase = getFunctionsBaseUrl();
+        const downloadProxyBase = functionsBase ? functionsBase.replace(/\/+$/, '') + '/downloadProxy' : '';
+
+        let href = item && item.url ? String(item.url) : '';
+        const storagePath = item.storagePath || getStoragePathFromDownloadUrl(href);
+        const bucketName = item.bucket || getBucketFromDownloadUrl(href) || bucketDefault;
+        const useProxy = !!(downloadProxyBase && storagePath);
+        if (useProxy) {
+            href = `${downloadProxyBase}?bucket=${encodeURIComponent(bucketName || '')}&filePath=${encodeURIComponent(storagePath)}`;
+        }
+
+        await downloadWithProgress(href, item.name || 'app', currentLang === 'es' ? 'Descargando…' : 'Downloading…');
+    }
+
+    async function openPostAppById(appId) {
+        const id = String(appId || '').trim();
+        if (!id) return;
+
+        let item = postAppsById.get(id) || null;
+        if (!item && db) {
+            try {
+                const snap = await db.collection('files').doc(id).get();
+                if (snap && snap.exists) {
+                    item = { id: snap.id, ...snap.data() };
+                    postAppsById.set(id, item);
+                }
+            } catch (e) { }
+        }
+
+        if (!item || !item.type) {
+            alert(currentLang === 'es' ? 'No se encontró esa App.' : 'App not found.');
+            return;
+        }
+
+        if (item.type === 'folder') {
+            await window.downloadFolder(item.id, item.name || 'carpeta');
+            return;
+        }
+        await downloadFileFromItem(item);
+    }
+
+    async function loadPostAppsIntoSelect(force) {
+        const select = document.getElementById('blogAppSelect');
+        if (!select) return;
+        if (!db) {
+            select.innerHTML = '';
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = currentLang === 'es' ? 'Firebase no configurado' : 'Firebase not configured';
+            select.appendChild(opt);
+            return;
+        }
+
+        const now = Date.now();
+        if (!force && lastPostAppsLoadAt && now - lastPostAppsLoadAt < 30_000 && select.options.length > 0) return;
+
+        select.disabled = true;
+        select.innerHTML = '';
+        const loadingOpt = document.createElement('option');
+        loadingOpt.value = '';
+        loadingOpt.textContent = currentLang === 'es' ? 'Cargando…' : 'Loading…';
+        select.appendChild(loadingOpt);
+
+        let filesSnap = null;
+        let foldersSnap = null;
+        try {
+            [filesSnap, foldersSnap] = await Promise.all([
+                db.collection('files').where('type', '==', 'file').limit(300).get().catch(() => null),
+                db.collection('files').where('type', '==', 'folder').limit(200).get().catch(() => null),
+            ]);
+        } catch (e) {
+            filesSnap = null;
+            foldersSnap = null;
+        }
+
+        const items = [];
+        if (filesSnap && filesSnap.docs) {
+            filesSnap.docs.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+        }
+        if (foldersSnap && foldersSnap.docs) {
+            foldersSnap.docs.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+        }
+
+        items.sort((a, b) => {
+            const pa = Array.isArray(a.path) ? a.path.join('/') : '';
+            const pb = Array.isArray(b.path) ? b.path.join('/') : '';
+            if (pa !== pb) return pa.localeCompare(pb);
+            const na = String(a.name || '');
+            const nb = String(b.name || '');
+            return na.localeCompare(nb);
+        });
+
+        select.innerHTML = '';
+        const firstOpt = document.createElement('option');
+        firstOpt.value = '';
+        firstOpt.textContent = currentLang === 'es' ? 'Elegí una App…' : 'Pick an App…';
+        select.appendChild(firstOpt);
+
+        items.forEach((item) => {
+            if (!item || !item.id || !item.name || !item.type) return;
+            postAppsById.set(item.id, item);
+            const icon = item.type === 'folder' ? '📁' : '📄';
+            const p = Array.isArray(item.path) ? item.path.join('/') : '';
+            const full = (p ? p + '/' : '') + String(item.name);
+            const opt = document.createElement('option');
+            opt.value = item.id;
+            opt.textContent = `${icon} ${full}`;
+            select.appendChild(opt);
+        });
+
+        lastPostAppsLoadAt = Date.now();
+        select.disabled = false;
+    }
+
+    window.refreshPostApps = function () {
+        return loadPostAppsIntoSelect(true);
+    };
+
+    window.insertSelectedPostAppLink = function () {
+        if (!isAdmin) return;
+        const select = document.getElementById('blogAppSelect');
+        if (!select) return;
+        const id = String(select.value || '').trim();
+        if (!id) return;
+        const item = postAppsById.get(id) || null;
+        const label = item && item.name ? String(item.name) : id;
+        const token = `[[app:${id}|${label.replace(/\]/g, '')}]]`;
+
+        const target = getBlogContentTarget();
+        if (!target) return;
+
+        const start = typeof target.selectionStart === 'number' ? target.selectionStart : target.value.length;
+        const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : target.value.length;
+        const before = target.value.slice(0, start);
+        const after = target.value.slice(end);
+        target.value = before + token + after;
+        try {
+            const nextPos = before.length + token.length;
+            target.focus();
+            target.setSelectionRange(nextPos, nextPos);
+        } catch (e) { }
+    };
+
     window.publishBlog = function () {
         if (!isAdmin) return;
         const titleEsEl = document.getElementById('blogTitleEs');
@@ -1500,6 +1757,19 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!blogsContainer) return;
 
         try {
+            const esEl = document.getElementById('blogContentEs');
+            const enEl = document.getElementById('blogContentEn');
+            if (esEl && !esEl.__trackFocus) {
+                esEl.__trackFocus = true;
+                esEl.addEventListener('focus', () => { lastFocusedBlogContentId = 'blogContentEs'; });
+            }
+            if (enEl && !enEl.__trackFocus) {
+                enEl.__trackFocus = true;
+                enEl.addEventListener('focus', () => { lastFocusedBlogContentId = 'blogContentEn'; });
+            }
+        } catch (e) { }
+
+        try {
             blogPosts.forEach((post) => {
                 const postDocId = typeof post.firebaseId === 'string' ? post.firebaseId.trim() : '';
                 const postKey = postDocId || String(post.id || post.createdAt || '');
@@ -1521,6 +1791,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const dateLocale = currentLang === 'es' ? 'es-ES' : 'en-US';
         const dateOptions = { day: 'numeric', month: 'long', year: 'numeric' };
+        let selfClientKey = '';
+        try { selfClientKey = sessionStorage.getItem('_selfClientKey') || ''; } catch (e) { }
+        selfClientKey = String(selfClientKey || '').trim();
         const formatPostDate = (post) => {
             if (typeof post.createdAt === 'number' && Number.isFinite(post.createdAt)) {
                 return new Date(post.createdAt).toLocaleDateString(dateLocale, dateOptions);
@@ -1556,6 +1829,31 @@ document.addEventListener('DOMContentLoaded', function () {
             return '';
         };
 
+        const renderPostContentHtml = (raw) => {
+            const text = String(raw || '');
+            if (!text) return '';
+            const re = /\[\[app:([A-Za-z0-9_-]+)(?:\|([^\]]*))?\]\]/g;
+            let out = '';
+            let last = 0;
+            let m = null;
+            while ((m = re.exec(text)) !== null) {
+                const before = text.slice(last, m.index);
+                out += escapeHtml(before).replace(/\n/g, '<br>');
+
+                const id = String(m[1] || '').trim();
+                let label = (m[2] != null ? String(m[2]) : '').trim();
+                if (!label) {
+                    const cached = postAppsById.get(id) || null;
+                    label = cached && cached.name ? String(cached.name) : id;
+                }
+
+                out += `<a href="#" class="post-app-link" data-app-id="${id}">${escapeHtml(label)}</a>`;
+                last = m.index + m[0].length;
+            }
+            out += escapeHtml(text.slice(last)).replace(/\n/g, '<br>');
+            return out;
+        };
+
         blogsContainer.innerHTML = blogPosts.map((post) => {
             const postDocId = typeof post.firebaseId === 'string' ? post.firebaseId.trim() : '';
             const postKey = postDocId || String(post.id || post.createdAt || '');
@@ -1566,7 +1864,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     <h3 class="post-title">${escapeHtml(getPostLocalizedText(post, 'titleByLang'))}</h3>
                     <span class="post-date">${escapeHtml(formatPostDate(post))}</span>
                 </div>
-                <p class="post-content">${escapeHtml(getPostLocalizedText(post, 'contentByLang'))}</p>
+                <div class="post-content">${renderPostContentHtml(getPostLocalizedText(post, 'contentByLang'))}</div>
                 ${isAdmin && postDocId ? `<div class="post-actions"><button class="btn btn-danger" onclick="deleteBlog('${postDocId}')">${t('delete')}</button></div>` : ''}
                 
                 <div class="comments-section">
@@ -1577,7 +1875,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <div class="comment-header">
                                     <span class="comment-author">${escapeHtml(c.author)}${c.isAdmin ? ` <span class="admin-badge">${t('admin')}</span>` : ''}</span>
                                     <span class="comment-date">${escapeHtml((typeof c.createdAt === 'number' && Number.isFinite(c.createdAt)) ? new Date(c.createdAt).toLocaleDateString(dateLocale) : (c.date || ''))}</span>
-                                    ${isAdmin && postDocId && c && c.clientKey ? `<button class="btn-ban-commenter" onclick="banCommenter('${String(c.clientKey)}')">🔨</button>` : ''}
+                                    ${isAdmin && postDocId && c && c.clientKey && !c.isAdmin && (!selfClientKey || String(c.clientKey) !== selfClientKey) ? `<button class="btn-ban-commenter" onclick="banCommenter('${String(c.clientKey)}')">🔨</button>` : ''}
                                     ${isAdmin && postDocId ? `<button class="btn-delete-comment" onclick="deleteComment('${postDocId}', ${idx})">×</button>` : ''}
                                 </div>
                                 <p class="comment-text">${escapeHtml(getCommentLocalizedText(c))}</p>
@@ -1593,6 +1891,18 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
         `;
         }).join('');
+
+        try {
+            blogsContainer.querySelectorAll('a.post-app-link').forEach((el) => {
+                if (el.__postAppBound) return;
+                el.__postAppBound = true;
+                el.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const id = el.getAttribute('data-app-id') || '';
+                    Promise.resolve().then(() => openPostAppById(id));
+                });
+            });
+        } catch (e) { }
 
         try {
             blogPosts.forEach((post) => {
@@ -1617,6 +1927,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
             });
         } catch (e) { }
+
+        if (isAdmin) {
+            Promise.resolve().then(() => loadPostAppsIntoSelect(false)).catch(() => { });
+        }
     };
 
     window.handleComment = function (e, a, b) {
@@ -1718,12 +2032,16 @@ document.addEventListener('DOMContentLoaded', function () {
 
         Promise.resolve()
             .then(callViaRust)
-            .then(() => {
-            if (input) input.value = '';
-            const keyForDraft = usedKey || postId;
-            const cur = blogDraftsByPostId.get(keyForDraft) || {};
-            blogDraftsByPostId.set(keyForDraft, { ...cur, comment: '' });
-        }).catch((error) => {
+            .then((result) => {
+                try {
+                    const ck = result && result.comment && result.comment.clientKey ? String(result.comment.clientKey).trim() : '';
+                    if (ck) sessionStorage.setItem('_selfClientKey', ck);
+                } catch (e) { }
+                if (input) input.value = '';
+                const keyForDraft = usedKey || postId;
+                const cur = blogDraftsByPostId.get(keyForDraft) || {};
+                blogDraftsByPostId.set(keyForDraft, { ...cur, comment: '' });
+            }).catch((error) => {
             console.error('Error adding comment:', error);
             if (error && String(error.code || '').includes('rust-failed')) {
                 alert('No se pudo guardar el comentario (Rust backend).');

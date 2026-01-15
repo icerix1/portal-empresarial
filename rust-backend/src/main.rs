@@ -823,6 +823,20 @@ async fn ban_user(
       .into_response();
   }
 
+  let ip = extract_client_ip(&headers).unwrap_or_default();
+  let ua = extract_user_agent(&headers);
+  if !ip.is_empty() {
+    let caller_raw = if ua.is_empty() { ip } else { format!("{ip}|{ua}") };
+    let caller_key = client_key_hash(&caller_raw);
+    if caller_key == body.clientKey {
+      return (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "ok": false, "error": "Cannot ban yourself" })),
+      )
+        .into_response();
+    }
+  }
+
   let token = match fetch_access_token(&state.http).await {
     Ok(t) => t,
     Err(e) => {
