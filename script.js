@@ -1692,7 +1692,6 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     window.insertSelectedPostAppLink = function () {
-        if (!isAdmin) return;
         const select = document.getElementById('blogAppSelect');
         if (!select) return;
         const id = String(select.value || '').trim();
@@ -1717,7 +1716,10 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     window.publishBlog = function () {
-        if (!isAdmin) return;
+        if (!isAdmin) {
+            alert(currentLang === 'es' ? 'Activá modo admin para publicar.' : 'Enable admin mode to publish.');
+            return;
+        }
         const titleEsEl = document.getElementById('blogTitleEs');
         const contentEsEl = document.getElementById('blogContentEs');
         const titleEnEl = document.getElementById('blogTitleEn');
@@ -1928,9 +1930,7 @@ document.addEventListener('DOMContentLoaded', function () {
             });
         } catch (e) { }
 
-        if (isAdmin) {
-            Promise.resolve().then(() => loadPostAppsIntoSelect(false)).catch(() => { });
-        }
+        Promise.resolve().then(() => loadPostAppsIntoSelect(false)).catch(() => { });
     };
 
     window.handleComment = function (e, a, b) {
