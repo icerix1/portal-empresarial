@@ -278,6 +278,43 @@ document.addEventListener('DOMContentLoaded', function () {
     if (langBtn) langBtn.addEventListener('click', toggleLanguage);
     updateLanguage();
 
+    function ensureBlogAppSelector() {
+        const form = document.getElementById('blogForm');
+        if (!form) return null;
+
+        const existing = document.getElementById('blogAppSelect');
+        if (existing) {
+            try {
+                const wrapper = existing.closest('.form-group');
+                if (wrapper) wrapper.style.display = '';
+            } catch (e) { }
+            return existing;
+        }
+
+        const contentEn = document.getElementById('blogContentEn');
+        if (!contentEn) return null;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-group';
+        wrapper.innerHTML = `
+            <label for="blogAppSelect" data-i18n="linkApp">${escapeHtml(t('linkApp'))}</label>
+            <div class="upload-actions" style="justify-content:flex-start;">
+                <select id="blogAppSelect" class="form-control" style="flex:1; min-width:220px;"></select>
+                <button type="button" class="btn btn-outline" onclick="refreshPostApps()" data-i18n="refreshApps">${escapeHtml(t('refreshApps'))}</button>
+                <button type="button" class="btn btn-primary" onclick="insertSelectedPostAppLink()" data-i18n="insertAppLink">${escapeHtml(t('insertAppLink'))}</button>
+            </div>
+        `;
+
+        const next = contentEn.closest('.form-group');
+        if (next && next.parentNode) next.parentNode.insertBefore(wrapper, next.nextSibling);
+        else form.appendChild(wrapper);
+
+        updateLanguage();
+        return document.getElementById('blogAppSelect');
+    }
+
+    try { ensureBlogAppSelector(); } catch (e) { }
+
     document.querySelectorAll('[data-paypal-donate]').forEach((el) => {
         el.setAttribute('href', PAYPAL_DONATION_URL);
     });
@@ -324,6 +361,72 @@ document.addEventListener('DOMContentLoaded', function () {
         `;
         document.body.appendChild(overlay);
         return overlay;
+    }
+
+    function ensureAdminKeyOverlay() {
+        let overlay = document.getElementById('adminKeyOverlay');
+        if (overlay) return overlay;
+
+        overlay = document.createElement('div');
+        overlay.id = 'adminKeyOverlay';
+        overlay.className = 'zip-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zip-overlay-card">
+                <div class="zip-overlay-title" id="adminKeyOverlayTitle">Admin key</div>
+                <div class="zip-overlay-sub" id="adminKeyOverlaySub">Ingresá tu admin key.</div>
+                <div style="margin: 12px 0;">
+                    <input id="adminKeyOverlayInput" type="password" class="form-control" placeholder="Admin key" autocomplete="current-password">
+                </div>
+                <div style="display:flex; gap:10px; justify-content:center;">
+                    <button class="btn btn-outline" id="adminKeyOverlayCancelBtn" type="button">Cancelar</button>
+                    <button class="btn btn-primary" id="adminKeyOverlayOkBtn" type="button">Confirmar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    function requestAdminKey() {
+        return new Promise((resolve) => {
+            const overlay = ensureAdminKeyOverlay();
+            const title = overlay.querySelector('#adminKeyOverlayTitle');
+            const sub = overlay.querySelector('#adminKeyOverlaySub');
+            const input = overlay.querySelector('#adminKeyOverlayInput');
+            const okBtn = overlay.querySelector('#adminKeyOverlayOkBtn');
+            const cancelBtn = overlay.querySelector('#adminKeyOverlayCancelBtn');
+
+            const cleanup = () => {
+                if (okBtn) okBtn.onclick = null;
+                if (cancelBtn) cancelBtn.onclick = null;
+                if (input) input.onkeydown = null;
+            };
+
+            const close = (value) => {
+                cleanup();
+                overlay.classList.add('hidden');
+                resolve(value);
+            };
+
+            if (title) title.textContent = currentLang === 'es' ? 'Admin key' : 'Admin key';
+            if (sub) sub.textContent = currentLang === 'es' ? 'Ingresá tu admin key.' : 'Enter your admin key.';
+            if (input) input.placeholder = currentLang === 'es' ? 'Admin key' : 'Admin key';
+
+            overlay.classList.remove('hidden');
+            if (input) {
+                input.value = '';
+                input.focus();
+            }
+
+            if (okBtn) okBtn.onclick = () => close(input ? input.value : '');
+            if (cancelBtn) cancelBtn.onclick = () => close(null);
+            if (input) {
+                input.onkeydown = (e) => {
+                    if (e.key === 'Enter') close(input.value);
+                    if (e.key === 'Escape') close(null);
+                };
+            }
+        });
     }
 
     function requestAdminSetupCode() {
@@ -498,6 +601,13 @@ document.addEventListener('DOMContentLoaded', function () {
             link.classList.add('active');
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById(tabName).classList.add('active');
+
+            if (tabName === 'blogs') {
+                Promise.resolve().then(() => {
+                    ensureBlogAppSelector();
+                    return loadPostAppsIntoSelect(true);
+                }).catch(() => { });
+            }
         });
     });
 
@@ -722,6 +832,28 @@ document.addEventListener('DOMContentLoaded', function () {
     const fileInput = document.getElementById('fileInput');
     const folderInput = document.getElementById('folderInput');
 
+    const uploadFingerprintLastSeenAt = new Map();
+
+    function makeUploadFingerprint(file, pathArray) {
+        const name = file && file.name ? String(file.name) : '';
+        const size = file && typeof file.size === 'number' ? file.size : 0;
+        const lastModified = file && typeof file.lastModified === 'number' ? file.lastModified : 0;
+        const rel = file && file.webkitRelativePath ? String(file.webkitRelativePath) : '';
+        const pathKey = makePathKey(pathArray || []);
+        return `${pathKey}\u0001${rel}\u0001${name}\u0001${size}\u0001${lastModified}`;
+    }
+
+    function allowUploadFingerprint(fp) {
+        const now = Date.now();
+        const last = uploadFingerprintLastSeenAt.get(fp);
+        if (typeof last === 'number' && now - last < 2500) return false;
+        uploadFingerprintLastSeenAt.set(fp, now);
+        for (const [k, v] of uploadFingerprintLastSeenAt.entries()) {
+            if (typeof v === 'number' && now - v > 60000) uploadFingerprintLastSeenAt.delete(k);
+        }
+        return true;
+    }
+
     // --- Drop Zone Listeners ---
     if (dropZone) {
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -758,7 +890,8 @@ document.addEventListener('DOMContentLoaded', function () {
         return new Promise((resolve) => {
             if (item.isFile) {
                 item.file((file) => {
-                    uploadFileToFirebase(file, path);
+                    const fp = makeUploadFingerprint(file, path);
+                    if (allowUploadFingerprint(fp)) uploadFileToFirebase(file, path);
                     resolve();
                 });
             } else if (item.isDirectory) {
@@ -840,6 +973,17 @@ document.addEventListener('DOMContentLoaded', function () {
         return next;
     }
 
+    function encodeStableId(input) {
+        try {
+            return btoa(unescape(encodeURIComponent(String(input))))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/g, '');
+        } catch (e) {
+            return Date.now().toString(36);
+        }
+    }
+
     function sanitizeStorageSegment(seg) {
         return String(seg || '').replace(/[\\/]/g, '_');
     }
@@ -847,9 +991,8 @@ document.addEventListener('DOMContentLoaded', function () {
     function buildUploadStoragePath(pathArray, fileName) {
         const safeParts = (pathArray || []).map(sanitizeStorageSegment).filter(Boolean);
         const safeName = sanitizeStorageSegment(fileName);
-        const unique = getUploadUniqueId();
         const dir = safeParts.length ? safeParts.join('/') + '/' : '';
-        return `uploads/${dir}${unique}_${safeName}`;
+        return `uploads/${dir}${safeName}`;
     }
 
     function buildUploadStoragePrefix(pathArray) {
@@ -864,10 +1007,36 @@ document.addEventListener('DOMContentLoaded', function () {
         const list = Array.from(files || []);
         if (!list.length) return;
 
+        const tasks = [];
+        const localSeen = new Set();
+        for (const file of list) {
+            let path = [...currentPath];
+            if (file && file.webkitRelativePath) {
+                const parts = String(file.webkitRelativePath).split('/');
+                parts.pop();
+                if (parts.length > 0) {
+                    path = [...currentPath, ...parts];
+                    let tempPath = [...currentPath];
+                    for (let part of parts) {
+                        tempPath.push(part);
+                        ensureFolderExists(tempPath);
+                    }
+                }
+            }
+
+            const fp = makeUploadFingerprint(file, path);
+            if (!allowUploadFingerprint(fp)) continue;
+            if (localSeen.has(fp)) continue;
+            localSeen.add(fp);
+            tasks.push({ file, path });
+        }
+
+        if (!tasks.length) return;
+
         activeUploadSession = {
             startedAt: Date.now(),
-            totalFiles: list.length,
-            totalBytes: list.reduce((acc, f) => acc + (f && f.size ? f.size : 0), 0),
+            totalFiles: tasks.length,
+            totalBytes: tasks.reduce((acc, t) => acc + (t && t.file && t.file.size ? t.file.size : 0), 0),
             completed: 0,
             failed: 0,
             okBytes: 0,
@@ -881,24 +1050,12 @@ document.addEventListener('DOMContentLoaded', function () {
         const concurrency = Math.min(3, session.totalFiles);
 
         const worker = async () => {
-            while (cursor < list.length) {
+            while (cursor < tasks.length) {
                 const idx = cursor;
                 cursor += 1;
-                const file = list[idx];
-
-                let path = [...currentPath];
-                if (file && file.webkitRelativePath) {
-                    const parts = file.webkitRelativePath.split('/');
-                    parts.pop();
-                    if (parts.length > 0) {
-                        path = [...currentPath, ...parts];
-                        let tempPath = [...currentPath];
-                        for (let part of parts) {
-                            tempPath.push(part);
-                            ensureFolderExists(tempPath);
-                        }
-                    }
-                }
+                const task = tasks[idx];
+                const file = task ? task.file : null;
+                const path = task ? task.path : [...currentPath];
 
                 let ok = false;
                 let errMsg = '';
@@ -951,19 +1108,8 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!isAdmin) return;
         const parentPath = pathArray.slice(0, -1);
         const folderName = pathArray[pathArray.length - 1];
-        const encodeId = (input) => {
-            try {
-                return btoa(unescape(encodeURIComponent(String(input))))
-                    .replace(/\+/g, '-')
-                    .replace(/\//g, '_')
-                    .replace(/=+$/g, '');
-            } catch (e) {
-                return Date.now().toString(36);
-            }
-        };
-
         const fullPathKey = makePathKey(pathArray);
-        const folderDocId = `folder_${encodeId(fullPathKey)}`;
+        const folderDocId = `folder_${encodeStableId(fullPathKey)}`;
 
         db.collection('files').doc(folderDocId).set({
             type: 'folder',
@@ -1035,14 +1181,9 @@ document.addEventListener('DOMContentLoaded', function () {
                             const rel = file && file.webkitRelativePath ? String(file.webkitRelativePath) : '';
                             if (rel) metadata.relativePath = rel;
 
-                            db.collection('files').add(metadata).then((docRef) => {
+                            const fileDocId = `file_${encodeStableId(makePathKey([...(pathArray || []), String(file.name || '')]))}`;
+                            db.collection('files').doc(fileDocId).set(metadata, { merge: true }).then(() => {
                                 console.log(`✅ Uploaded: ${file.name}`);
-                                try {
-                                    if (makePathKey(pathArray) === currentPathKey && docRef && docRef.id) {
-                                        currentFolderItems.unshift({ id: docRef.id, ...metadata });
-                                        queueRenderFiles();
-                                    }
-                                } catch (e) { }
                                 try { progressRow.remove(); } catch (e) { }
                                 resolve({ ok: true });
                             }).catch((error) => {
@@ -1758,6 +1899,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const blogsContainer = document.getElementById('blogsContainer');
         if (!blogsContainer) return;
 
+        try { ensureBlogAppSelector(); } catch (e) { }
+
         try {
             const esEl = document.getElementById('blogContentEs');
             const enEl = document.getElementById('blogContentEn');
@@ -2055,10 +2198,9 @@ document.addEventListener('DOMContentLoaded', function () {
         let existing = '';
         try { existing = sessionStorage.getItem('_adminApiKey') || ''; } catch (e) { }
         if (existing && String(existing).trim()) return String(existing).trim();
-        const label = currentLang === 'es' ? 'Ingresá tu admin key' : 'Enter your admin key';
-        const entered = window.prompt(label);
+        const entered = await requestAdminKey();
         if (entered == null) return '';
-        const next = String(entered).trim();
+        const next = String(entered || '').trim();
         if (!next) return '';
         try { sessionStorage.setItem('_adminApiKey', next); } catch (e) { }
         return next;
