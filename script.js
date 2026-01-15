@@ -1440,6 +1440,35 @@ document.addEventListener('DOMContentLoaded', function () {
         return `https://${region}-${projectId}.cloudfunctions.net`;
     }
 
+    function normalizeBucketForRest(bucketName) {
+        const b = typeof bucketName === 'string' ? bucketName.trim() : '';
+        if (!b) return '';
+        if (b.endsWith('.firebasestorage.app')) {
+            return b.replace(/\.firebasestorage\.app$/, '.appspot.com');
+        }
+        return b;
+    }
+
+    function makeStorageAltMediaUrl(bucketName, filePath) {
+        const b = normalizeBucketForRest(bucketName);
+        const p = typeof filePath === 'string' ? filePath.trim() : '';
+        if (!b || !p) return '';
+        return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(b)}/o/${encodeURIComponent(p)}?alt=media`;
+    }
+
+    function makeStorageAltMediaUrlFromDownloadProxyUrl(url) {
+        try {
+            const u = new URL(String(url || ''));
+            const pathname = String(u.pathname || '');
+            if (!pathname.endsWith('/downloadProxy')) return '';
+            const bucket = u.searchParams.get('bucket') || '';
+            const filePath = u.searchParams.get('filePath') || '';
+            return makeStorageAltMediaUrl(bucket, filePath);
+        } catch (e) {
+            return '';
+        }
+    }
+
     function parseFilenameFromContentDisposition(value) {
         const cd = typeof value === 'string' ? value : '';
         if (!cd) return '';
@@ -1484,6 +1513,15 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (!resp || !resp.ok) {
+            if (!hasExtraHeaders && resp && (resp.status === 401 || resp.status === 403)) {
+                const altUrl = makeStorageAltMediaUrlFromDownloadProxyUrl(url);
+                if (altUrl) {
+                    setZipOverlay(true, null, 'Iniciando descarga…', overlayTitle, null);
+                    triggerDirectDownload(altUrl, safeFallback);
+                    setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 2500);
+                    return;
+                }
+            }
             let bodyText = '';
             try { bodyText = await resp.text(); } catch (e) { }
             setZipOverlay(false, 100, '', overlayTitle, null);
