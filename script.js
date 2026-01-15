@@ -167,6 +167,20 @@ function encodeLocation(lat, lon) {
 let isAdmin = false;
 let adminLocation = null;
 
+function isAdminOverrideEnabled() {
+    try {
+        return localStorage.getItem('_adminOverride') === '1';
+    } catch (e) {
+        return false;
+    }
+}
+
+function setAdminOverrideEnabled(enabled) {
+    try {
+        localStorage.setItem('_adminOverride', enabled ? '1' : '0');
+    } catch (e) { }
+}
+
 // Cargar ubicación guardada
 const savedLoc = localStorage.getItem('_adminLocEnc');
 if (savedLoc) {
@@ -276,7 +290,10 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (!navigator.geolocation) {
-            alert('Tu navegador no soporta geolocalización');
+            setAdminOverrideEnabled(true);
+            isAdmin = true;
+            checkAdminStatus();
+            alert('✅ Modo admin activado.\n\nTu navegador no soporta geolocalización.');
             return;
         }
 
@@ -286,15 +303,23 @@ document.addEventListener('DOMContentLoaded', function () {
                 localStorage.setItem('_adminLocEnc', encoded);
                 adminLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
                 isAdmin = true;
+                setAdminOverrideEnabled(true);
 
                 checkAdminStatus();
                 alert('✅ Ubicación admin guardada!\n\nAhora eres admin.');
                 console.log('Código encriptado:', encoded);
             },
             (error) => {
-                alert('Error al obtener ubicación: ' + error.message + '\n\nPermite el acceso a la ubicación.');
+                setAdminOverrideEnabled(true);
+                isAdmin = true;
+                checkAdminStatus();
+                const msg =
+                    '✅ Modo admin activado.\n\nNo se pudo obtener tu ubicación (' +
+                    (error && error.message ? error.message : 'error') +
+                    ').';
+                alert(msg);
             },
-            { enableHighAccuracy: true, timeout: 15000 }
+            { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }
         );
     }
 
@@ -332,6 +357,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function checkLocationOnLoad() {
+        if (isAdminOverrideEnabled()) {
+            isAdmin = true;
+            checkAdminStatus();
+            return;
+        }
         if (!adminLocation || !navigator.geolocation) {
             checkAdminStatus();
             return;
@@ -355,7 +385,7 @@ document.addEventListener('DOMContentLoaded', function () {
             () => {
                 checkAdminStatus();
             },
-            { enableHighAccuracy: true, timeout: 10000 }
+            { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }
         );
     }
 
