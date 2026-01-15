@@ -1,7 +1,7 @@
 use async_zip::tokio::write::ZipFileWriter;
 use async_zip::{Compression, ZipEntryBuilder};
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap, Method, StatusCode};
+use axum::http::{header, HeaderMap, HeaderName, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Json;
@@ -30,6 +30,8 @@ struct AddCommentRequest {
   postId: String,
   #[serde(default)]
   id: Option<i64>,
+  #[serde(default)]
+  clientId: String,
   #[serde(default)]
   author: String,
   #[serde(default)]
@@ -80,11 +82,23 @@ struct OkResponse<T> {
   error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct BanRequest {
+  #[serde(default)]
+  clientKey: String,
+  #[serde(default)]
+  reason: String,
+}
+
 const URL_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
   .remove(b'-')
   .remove(b'_')
   .remove(b'.')
   .remove(b'~');
+
+const COMMENT_COOLDOWN_GLOBAL_MS: i64 = 60_000;
+const COMMENT_COOLDOWN_PER_POST_MS: i64 = 600_000;
 
 fn normalize_lang(raw: &str) -> &str {
   match raw.trim().to_lowercase().as_str() {
@@ -378,6 +392,7 @@ async fn add_comment(
   body.postId = body.postId.trim().to_string();
   body.text = body.text.trim().to_string();
   body.author = body.author.trim().to_string();
+  body.clientId = body.clientId.trim().to_string();
   body.lang = normalize_lang(&body.lang).to_string();
 
   if body.author.is_empty() {
@@ -395,6 +410,30 @@ async fn add_comment(
     );
   }
 
+  let ip = extract_client_ip(&headers).unwrap_or_default();
+  let ua = extract_user_agent(&headers);
+  let raw_client_id = if !ip.is_empty() {
+    if ua.is_empty() {
+      ip
+    } else {
+      format!("{ip}|{ua}")
+    }
+  } else {
+    body.clientId.clone()
+  };
+  if raw_client_id.is_empty() {
+    return (
+      StatusCode::BAD_REQUEST,
+      Json(OkResponse::<serde_json::Value> {
+        ok: false,
+        comment: None,
+        error: Some("Missing clientId".to_string()),
+      }),
+    );
+  }
+  let client_id = raw_client_id;
+  let client_key = client_key_hash(&client_id);
+
   let token = match fetch_access_token(&state.http).await {
     Ok(t) => t,
     Err(e) => {
@@ -409,6 +448,25 @@ async fn add_comment(
     }
   };
 
+  let banned = firestore_is_banned(&state.http, &state.project_id, &token, &client_key)
+    .await
+    .unwrap_or(false);
+  if banned {
+    let msg = if body.lang == "es" {
+      "Estás baneado permanentemente.".to_string()
+    } else {
+      "You are permanently banned.".to_string()
+    };
+    return (
+      StatusCode::FORBIDDEN,
+      Json(OkResponse::<serde_json::Value> {
+        ok: false,
+        comment: None,
+        error: Some(msg),
+      }),
+    );
+  }
+
   let doc_id = match resolve_post_doc_id(&state.http, &state.project_id, &token, &body).await {
     Ok(id) => id,
     Err(e) => {
@@ -422,6 +480,63 @@ async fn add_comment(
       );
     }
   };
+
+  let now = chrono_millis();
+  let global_limit_key = rate_limit_key("global", &client_id);
+  let per_post_limit_key = rate_limit_key(&doc_id, &client_id);
+  let global_wait = enforce_rate_limit_ms(
+    &state.http,
+    &state.project_id,
+    &token,
+    &global_limit_key,
+    now,
+    COMMENT_COOLDOWN_GLOBAL_MS,
+  )
+  .await
+  .unwrap_or(0);
+  if global_wait > 0 {
+    let msg = if body.lang == "es" {
+      format!("Esperá {}s antes de volver a comentar.", (global_wait + 999) / 1000)
+    } else {
+      format!("Wait {}s before commenting again.", (global_wait + 999) / 1000)
+    };
+    return (
+      StatusCode::TOO_MANY_REQUESTS,
+      Json(OkResponse::<serde_json::Value> {
+        ok: false,
+        comment: None,
+        error: Some(msg),
+      }),
+    );
+  }
+  let per_post_wait = enforce_rate_limit_ms(
+    &state.http,
+    &state.project_id,
+    &token,
+    &per_post_limit_key,
+    now,
+    COMMENT_COOLDOWN_PER_POST_MS,
+  )
+  .await
+  .unwrap_or(0);
+  if per_post_wait > 0 {
+    let msg = if body.lang == "es" {
+      format!("Esperá {}s antes de comentar de nuevo en este post.", (per_post_wait + 999) / 1000)
+    } else {
+      format!(
+        "Wait {}s before commenting again on this post.",
+        (per_post_wait + 999) / 1000
+      )
+    };
+    return (
+      StatusCode::TOO_MANY_REQUESTS,
+      Json(OkResponse::<serde_json::Value> {
+        ok: false,
+        comment: None,
+        error: Some(msg),
+      }),
+    );
+  }
 
   let other_lang = if body.lang == "es" { "en" } else { "es" };
   let translated = if !state.translate_key.is_empty() {
@@ -438,7 +553,7 @@ async fn add_comment(
     String::new()
   };
 
-  let created_at = chrono_millis();
+  let created_at = now;
   let comment_id = format!(
     "{}_{}",
     created_at,
@@ -453,6 +568,7 @@ async fn add_comment(
     "lang": body.lang,
     "createdAt": created_at,
     "isAdmin": body.isAdmin,
+    "clientKey": client_key,
     "textByLang": {
       body.lang.clone(): body.text,
       other_lang: translated,
@@ -504,6 +620,271 @@ fn chrono_millis() -> i64 {
 fn rand_suffix() -> String {
   let r = fastrand::u64(..);
   format!("{:x}", r)
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
+  let h = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())?;
+  let first = h.split(',').next().unwrap_or("").trim();
+  if first.is_empty() {
+    None
+  } else {
+    Some(first.to_string())
+  }
+}
+
+fn extract_user_agent(headers: &HeaderMap) -> String {
+  headers
+    .get(header::USER_AGENT)
+    .and_then(|v| v.to_str().ok())
+    .unwrap_or("")
+    .trim()
+    .to_string()
+}
+
+fn client_key_hash(value: &str) -> String {
+  use sha2::{Digest, Sha256};
+  let mut hasher = Sha256::new();
+  hasher.update(value.as_bytes());
+  hex::encode(hasher.finalize())
+}
+
+fn rate_limit_key(scope: &str, client_id: &str) -> String {
+  use sha2::{Digest, Sha256};
+  let mut hasher = Sha256::new();
+  hasher.update(scope.as_bytes());
+  hasher.update(b"|");
+  hasher.update(client_id.as_bytes());
+  hex::encode(hasher.finalize())
+}
+
+async fn firestore_get_limit_last_at(
+  http: &reqwest::Client,
+  project_id: &str,
+  token: &str,
+  key: &str,
+) -> anyhow::Result<Option<i64>> {
+  let key = key.trim();
+  if key.is_empty() {
+    return Ok(None);
+  }
+  let url = format!(
+    "https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents/comment_limits/{key}"
+  );
+  let resp = http.get(url).bearer_auth(token).send().await?;
+  let status = resp.status();
+  if status == StatusCode::NOT_FOUND {
+    return Ok(None);
+  }
+  if !status.is_success() {
+    anyhow::bail!("limit get http {}", status);
+  }
+  let json: serde_json::Value = resp.json().await.unwrap_or(json!({}));
+  let last_at = json
+    .get("fields")
+    .and_then(|f| f.get("lastAt"))
+    .and_then(|f| f.get("integerValue"))
+    .and_then(|v| v.as_str())
+    .and_then(|s| s.parse::<i64>().ok());
+  Ok(last_at)
+}
+
+async fn firestore_set_limit_last_at(
+  http: &reqwest::Client,
+  project_id: &str,
+  token: &str,
+  key: &str,
+  last_at: i64,
+) -> anyhow::Result<()> {
+  let key = key.trim();
+  if key.is_empty() {
+    return Ok(());
+  }
+  let url = format!("https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents:commit");
+  let name = format!(
+    "projects/{project_id}/databases/(default)/documents/comment_limits/{key}"
+  );
+  let body = json!({
+    "writes": [{
+      "update": {
+        "name": name,
+        "fields": {
+          "lastAt": fs_int(last_at),
+          "updatedAt": fs_int(last_at)
+        }
+      },
+      "updateMask": { "fieldPaths": ["lastAt", "updatedAt"] }
+    }]
+  });
+  let resp = http.post(url).bearer_auth(token).json(&body).send().await?;
+  let status = resp.status();
+  if !status.is_success() {
+    let t = resp.text().await.unwrap_or_default();
+    anyhow::bail!("limit set http {} {}", status, t);
+  }
+  Ok(())
+}
+
+async fn enforce_rate_limit_ms(
+  http: &reqwest::Client,
+  project_id: &str,
+  token: &str,
+  key: &str,
+  now: i64,
+  cooldown_ms: i64,
+) -> anyhow::Result<i64> {
+  if key.trim().is_empty() {
+    return Ok(0);
+  }
+  let last = firestore_get_limit_last_at(http, project_id, token, key).await?;
+  let wait = match last {
+    Some(v) if v > 0 && now >= v && now - v < cooldown_ms => cooldown_ms - (now - v),
+    Some(v) if v > 0 && now < v && v - now < cooldown_ms => cooldown_ms,
+    _ => 0,
+  };
+  if wait > 0 {
+    return Ok(wait);
+  }
+  firestore_set_limit_last_at(http, project_id, token, key, now).await?;
+  Ok(0)
+}
+
+async fn firestore_is_banned(
+  http: &reqwest::Client,
+  project_id: &str,
+  token: &str,
+  client_key: &str,
+) -> anyhow::Result<bool> {
+  let key = client_key.trim();
+  if key.is_empty() {
+    return Ok(false);
+  }
+  let url = format!(
+    "https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents/bans/{key}"
+  );
+  let resp = http.get(url).bearer_auth(token).send().await?;
+  let status = resp.status();
+  if status == StatusCode::NOT_FOUND {
+    return Ok(false);
+  }
+  if !status.is_success() {
+    anyhow::bail!("ban check http {}", status);
+  }
+  Ok(true)
+}
+
+fn env_admin_key() -> String {
+  env::var("ADMIN_KEY")
+    .or_else(|_| env::var("ADMIN_TOKEN"))
+    .unwrap_or_default()
+    .trim()
+    .to_string()
+}
+
+fn is_valid_admin(headers: &HeaderMap) -> bool {
+  let expected = env_admin_key();
+  if expected.is_empty() {
+    return false;
+  }
+  let provided = headers
+    .get("x-admin-key")
+    .and_then(|v| v.to_str().ok())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+  !provided.is_empty() && provided == expected
+}
+
+async fn ban_user(
+  State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
+  Json(mut body): Json<BanRequest>,
+) -> impl IntoResponse {
+  if !is_valid_admin(&headers) {
+    return (
+      StatusCode::UNAUTHORIZED,
+      Json(json!({ "ok": false, "error": "Unauthorized" })),
+    )
+      .into_response();
+  }
+  body.clientKey = body.clientKey.trim().to_string();
+  body.reason = body.reason.trim().to_string();
+  if body.clientKey.is_empty() {
+    return (
+      StatusCode::BAD_REQUEST,
+      Json(json!({ "ok": false, "error": "Missing clientKey" })),
+    )
+      .into_response();
+  }
+  if body.clientKey.len() != 64 || !body.clientKey.chars().all(|c| c.is_ascii_hexdigit()) {
+    return (
+      StatusCode::BAD_REQUEST,
+      Json(json!({ "ok": false, "error": "Invalid clientKey" })),
+    )
+      .into_response();
+  }
+
+  let token = match fetch_access_token(&state.http).await {
+    Ok(t) => t,
+    Err(e) => {
+      return (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "ok": false, "error": format!("auth token error: {e}") })),
+      )
+        .into_response();
+    }
+  };
+
+  let now = chrono_millis();
+  let reason = if body.reason.is_empty() {
+    "banned".to_string()
+  } else {
+    body.reason
+  };
+
+  let url = format!(
+    "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents:commit",
+    state.project_id
+  );
+  let name = format!(
+    "projects/{}/databases/(default)/documents/bans/{}",
+    state.project_id, body.clientKey
+  );
+  let write = json!({
+    "writes": [{
+      "update": {
+        "name": name,
+        "fields": {
+          "bannedAt": fs_int(now),
+          "reason": fs_string(&reason),
+          "permanent": fs_bool(true)
+        }
+      }
+    }]
+  });
+  let resp = state
+    .http
+    .post(url)
+    .bearer_auth(token)
+    .json(&write)
+    .send()
+    .await;
+  match resp {
+    Ok(r) if r.status().is_success() => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+    Ok(r) => {
+      let status = r.status();
+      let t = r.text().await.unwrap_or_default();
+      (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "ok": false, "error": format!("ban write http {} {}", status, t) })),
+      )
+        .into_response()
+    }
+    Err(e) => (
+      StatusCode::INTERNAL_SERVER_ERROR,
+      Json(json!({ "ok": false, "error": format!("ban write error: {e}") })),
+    )
+      .into_response(),
+  }
 }
 
 async fn fetch_access_token(http: &reqwest::Client) -> anyhow::Result<String> {
@@ -958,6 +1339,16 @@ fn comment_to_firestore_value(comment: &serde_json::Value) -> serde_json::Value 
   let id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
   fields.insert("id".to_string(), fs_string(id));
 
+  let client_key = obj
+    .get("clientKey")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+  if !client_key.is_empty() {
+    fields.insert("clientKey".to_string(), fs_string(&client_key));
+  }
+
   let uid_is_null = obj.get("uid").map(|v| v.is_null()).unwrap_or(true);
   if uid_is_null {
     fields.insert("uid".to_string(), fs_null());
@@ -1102,6 +1493,7 @@ async fn main() -> anyhow::Result<()> {
       header::IF_MODIFIED_SINCE,
       header::IF_MATCH,
       header::IF_RANGE,
+      HeaderName::from_static("x-admin-key"),
     ]);
 
   let app = axum::Router::new()
@@ -1109,6 +1501,7 @@ async fn main() -> anyhow::Result<()> {
     .route("/health", get(healthz))
     .route("/healthz", get(healthz))
     .route("/v1/comments", post(add_comment))
+    .route("/v1/ban", post(ban_user))
     .route("/v1/download", get(download_proxy))
     .route("/v1/zip", get(zip_folder))
     .route("/v1/signed-url", get(signed_url))

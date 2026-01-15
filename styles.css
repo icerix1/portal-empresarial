@@ -677,6 +677,16 @@ textarea.form-control {
     line-height: 1;
 }
 
+.btn-ban-commenter {
+    background: transparent;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0 0.25rem;
+    line-height: 1;
+}
+
 .comment-text {
     font-size: 0.9rem;
     color: var(--text-dark);

@@ -53,14 +53,6 @@ const translations = {
         donatePaypal: 'Donaciones por PayPal',
         back: 'Volver',
         translationMissing: 'Sin traducción disponible',
-        loginTitle: 'Iniciar sesión',
-        registerTitle: 'Registrarte',
-        email: 'Email',
-        password: 'Contraseña',
-        haveAccount: '¿Ya tenés cuenta? Iniciar sesión',
-        noAccount: '¿No tenés cuenta? Registrarte',
-        continue: 'Continuar',
-        logout: 'Salir'
     },
     en: {
         portal: "Icerix's blog",
@@ -112,15 +104,7 @@ const translations = {
         download: 'Download',
         donatePaypal: 'Donate via PayPal',
         back: 'Back',
-        translationMissing: 'No translation available',
-        loginTitle: 'Sign in',
-        registerTitle: 'Sign up',
-        email: 'Email',
-        password: 'Password',
-        haveAccount: 'Already have an account? Sign in',
-        noAccount: 'No account? Sign up',
-        continue: 'Continue',
-        logout: 'Logout'
+        translationMissing: 'No translation available'
     }
 };
 
@@ -150,23 +134,6 @@ function updateLanguage() {
     const langEl = document.getElementById('currentLang');
     if (langEl) langEl.textContent = currentLang.toUpperCase();
     document.documentElement.lang = currentLang;
-
-    try {
-        const overlay = document.getElementById('authOverlay');
-        if (overlay) {
-            const titleEl = overlay.querySelector('#authOverlayTitle');
-            const emailEl = overlay.querySelector('#authEmail');
-            const passEl = overlay.querySelector('#authPassword');
-            const submitBtn = overlay.querySelector('#authSubmitBtn');
-            const toggleBtn = overlay.querySelector('#authToggleModeBtn');
-            const mode = overlay.getAttribute('data-mode') === 'register' ? 'register' : 'login';
-            if (titleEl) titleEl.textContent = t(mode === 'login' ? 'loginTitle' : 'registerTitle');
-            if (submitBtn) submitBtn.textContent = t('continue');
-            if (toggleBtn) toggleBtn.textContent = t(mode === 'login' ? 'noAccount' : 'haveAccount');
-            if (emailEl) emailEl.placeholder = t('email');
-            if (passEl) passEl.placeholder = t('password');
-        }
-    } catch (e) { }
 
     if (typeof window.renderFiles === 'function') window.renderFiles();
     if (typeof window.renderBlogs === 'function') window.renderBlogs();
@@ -320,36 +287,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 adminLocation = { lat: position.coords.latitude, lon: position.coords.longitude };
                 isAdmin = true;
 
-                // Guardar UID del admin en Firestore
-                const auth = firebase.auth && firebase.auth();
-                if (auth) {
-                    const saveUid = (u) => {
-                        if (!u) {
-                            console.error('No hay usuario autenticado para guardar UID admin');
-                            return;
-                        }
-                        const adminUid = u.uid;
-                        db.collection('config').doc('admin').set({ uid: adminUid }, { merge: true })
-                            .then(() => console.log('Admin UID guardado en Firestore'))
-                            .catch(err => console.error('Error guardando admin UID:', err));
-                    };
-
-                    if (auth.currentUser) {
-                        saveUid(auth.currentUser);
-                    } else {
-                        const unsubscribe = auth.onAuthStateChanged((u) => {
-                            if (u) {
-                                try { unsubscribe(); } catch (e) { }
-                                saveUid(u);
-                            }
-                        });
-                        setTimeout(() => {
-                            try { unsubscribe(); } catch (e) { }
-                            saveUid(auth.currentUser);
-                        }, 5000);
-                    }
-                }
-
                 checkAdminStatus();
                 alert('✅ Ubicación admin guardada!\n\nAhora eres admin.');
                 console.log('Código encriptado:', encoded);
@@ -468,10 +405,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const RUST_DOWNLOADS_ENABLED = false;
 
     // Initialize Firebase
-    let db, storage, auth;
+    let db, storage;
     try {
         firebase.initializeApp(config);
-        auth = firebase.auth();
         db = firebase.firestore();
         storage = firebase.storage();
         try { db.enablePersistence({ synchronizeTabs: true }).catch(() => { }); } catch (e) { }
@@ -484,134 +420,6 @@ document.addEventListener('DOMContentLoaded', function () {
         console.error("Firebase Init Error:", e);
         const warning = document.getElementById('firebase-warning');
         if (warning) warning.style.display = 'flex';
-    }
-
-    function ensureAuthOverlay() {
-        let overlay = document.getElementById('authOverlay');
-        if (overlay) return overlay;
-
-        overlay = document.createElement('div');
-        overlay.id = 'authOverlay';
-        overlay.className = 'zip-overlay hidden';
-        overlay.innerHTML = `
-            <div class="zip-overlay-card">
-                <div class="zip-overlay-title" id="authOverlayTitle">${escapeHtml(t('loginTitle'))}</div>
-                <div class="zip-overlay-sub" id="authOverlaySub"> </div>
-                <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
-                    <input id="authEmail" type="email" class="form-control" placeholder="${escapeHtml(t('email'))}" autocomplete="email">
-                    <input id="authPassword" type="password" class="form-control" placeholder="${escapeHtml(t('password'))}" autocomplete="current-password">
-                    <button class="btn btn-primary" id="authSubmitBtn" type="button">${escapeHtml(t('continue'))}</button>
-                    <button class="btn btn-outline" id="authToggleModeBtn" type="button">${escapeHtml(t('noAccount'))}</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-        return overlay;
-    }
-
-    function setAuthOverlay(visible) {
-        const overlay = ensureAuthOverlay();
-        if (visible) overlay.classList.remove('hidden');
-        else overlay.classList.add('hidden');
-    }
-
-    function getIdTokenSafe() {
-        try {
-            const u = auth && auth.currentUser ? auth.currentUser : null;
-            if (!u || typeof u.getIdToken !== 'function') return Promise.resolve('');
-            return u.getIdToken().then((t) => String(t || '')).catch(() => '');
-        } catch (e) {
-            return Promise.resolve('');
-        }
-    }
-
-    function wireAuthUi() {
-        const overlay = ensureAuthOverlay();
-        const titleEl = overlay.querySelector('#authOverlayTitle');
-        const subEl = overlay.querySelector('#authOverlaySub');
-        const emailEl = overlay.querySelector('#authEmail');
-        const passEl = overlay.querySelector('#authPassword');
-        const submitBtn = overlay.querySelector('#authSubmitBtn');
-        const toggleBtn = overlay.querySelector('#authToggleModeBtn');
-        const logoutBtn = document.getElementById('logoutBtn');
-
-        let mode = 'login';
-
-        const render = () => {
-            try { overlay.setAttribute('data-mode', mode); } catch (e) { }
-            if (titleEl) titleEl.textContent = t(mode === 'login' ? 'loginTitle' : 'registerTitle');
-            if (toggleBtn) toggleBtn.textContent = t(mode === 'login' ? 'noAccount' : 'haveAccount');
-            if (subEl) subEl.textContent = '';
-            if (passEl) passEl.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-        };
-
-        const setError = (text) => {
-            if (subEl) subEl.textContent = String(text || '');
-        };
-
-        const submit = async () => {
-            if (!auth) return;
-            const email = emailEl ? String(emailEl.value || '').trim() : '';
-            const password = passEl ? String(passEl.value || '') : '';
-            if (!email || !password) {
-                setError(currentLang === 'es' ? 'Completá email y contraseña.' : 'Enter email and password.');
-                return;
-            }
-            setError(currentLang === 'es' ? 'Procesando…' : 'Working…');
-            try {
-                if (mode === 'login') {
-                    await auth.signInWithEmailAndPassword(email, password);
-                } else {
-                    const cred = await auth.createUserWithEmailAndPassword(email, password);
-                    try {
-                        if (cred && cred.user && db) {
-                            await db.collection('users').doc(cred.user.uid).set({
-                                email: cred.user.email || email,
-                                createdAt: Date.now()
-                            }, { merge: true });
-                        }
-                    } catch (e) { }
-                }
-                setError('');
-            } catch (e) {
-                const msg = String(e && e.message ? e.message : e);
-                setError(msg);
-            }
-        };
-
-        if (toggleBtn) toggleBtn.onclick = () => {
-            mode = mode === 'login' ? 'register' : 'login';
-            render();
-        };
-        if (submitBtn) submitBtn.onclick = submit;
-        if (passEl) passEl.onkeydown = (ev) => {
-            if (ev && ev.key === 'Enter') submit();
-        };
-        if (logoutBtn) {
-            logoutBtn.onclick = () => {
-                try { if (auth) auth.signOut(); } catch (e) { }
-            };
-        }
-
-        render();
-    }
-
-    function initAuthGate() {
-        wireAuthUi();
-        setAuthOverlay(true);
-        const logoutBtn = document.getElementById('logoutBtn');
-        if (!auth || typeof auth.onAuthStateChanged !== 'function') return;
-        auth.onAuthStateChanged((user) => {
-            if (user) {
-                setAuthOverlay(false);
-                if (logoutBtn) logoutBtn.classList.remove('hidden');
-                startRealtimeListeners();
-            } else {
-                stopRealtimeListeners();
-                setAuthOverlay(true);
-                if (logoutBtn) logoutBtn.classList.add('hidden');
-            }
-        });
     }
 
     // State
@@ -745,7 +553,7 @@ document.addEventListener('DOMContentLoaded', function () {
         console.error("Firestore listener error:", error);
         if (!permissionAlertShown && error && error.code === 'permission-denied') {
             permissionAlertShown = true;
-            alert('No tenés permisos para leer Firestore. Revisá las reglas de Firestore (y asegurate de estar logueado).');
+            alert('No tenés permisos para leer Firestore. Revisá las reglas de Firestore.');
         }
     }
 
@@ -889,6 +697,23 @@ document.addEventListener('DOMContentLoaded', function () {
         return Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
     }
 
+    function getClientId() {
+        const key = '_clientId';
+        try {
+            const existing = localStorage.getItem(key);
+            if (existing && String(existing).trim()) return String(existing);
+        } catch (e) { }
+
+        let next = '';
+        try {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') next = window.crypto.randomUUID();
+        } catch (e) { }
+        if (!next) next = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+
+        try { localStorage.setItem(key, next); } catch (e) { }
+        return next;
+    }
+
     function sanitizeStorageSegment(seg) {
         return String(seg || '').replace(/[\\/]/g, '_');
     }
@@ -909,12 +734,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     async function handleFiles(files) {
         if (!isAdmin) return;
-        const auth = firebase.auth && firebase.auth();
-        if (!auth || !auth.currentUser) {
-            console.error('❌ No hay usuario autenticado todavía. Espera 2 segundos y reintenta.');
-            alert('Esperá un momento: Firebase todavía está autenticando. Reintentá en 2 segundos.');
-            return;
-        }
 
         const list = Array.from(files || []);
         if (!list.length) return;
@@ -1033,11 +852,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function uploadFileToFirebase(file, pathArray) {
         if (!isAdmin) return Promise.resolve({ ok: false, stage: 'admin', error: new Error('Not admin') });
-        const auth = firebase.auth && firebase.auth();
-        if (!auth || !auth.currentUser) {
-            console.error(`❌ No hay usuario autenticado todavía. No se puede subir ${file.name}.`);
-            return Promise.resolve({ ok: false, stage: 'auth', error: new Error('No authenticated user') });
-        }
         return new Promise((resolve) => {
             const filesContainer = document.getElementById('filesContainer');
             const progressRow = document.createElement('tr');
@@ -1519,11 +1333,7 @@ document.addEventListener('DOMContentLoaded', function () {
             downloadWithProgress(href, item.name, 'Descargando archivo…');
             return;
         }
-
-        getIdTokenSafe().then((token) => {
-            const headers = token ? { Authorization: `Bearer ${token}` } : {};
-            downloadWithProgress(href, item.name, 'Descargando archivo…', headers);
-        });
+        downloadWithProgress(href, item.name, 'Descargando archivo…');
     };
 
     window.downloadFolder = async function (folderId, folderName) {
@@ -1535,12 +1345,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const url = `${base.replace(/\/+$/, '')}/zipFolder?folderId=${encodeURIComponent(String(folderId || ''))}&ts=${Date.now()}`;
         const name = (folderName ? String(folderName) : 'carpeta') + '.zip';
-        const token = await getIdTokenSafe();
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        await downloadWithProgress(url, name, 'Descargando carpeta…', headers);
+        await downloadWithProgress(url, name, 'Descargando carpeta…');
     };
 
-    initAuthGate();
+    startRealtimeListeners();
 
     // --- Admin Actions ---
     window.deleteItem = function (id) {
@@ -1739,6 +1547,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <div class="comment-header">
                                     <span class="comment-author">${escapeHtml(c.author)}${c.isAdmin ? ` <span class="admin-badge">${t('admin')}</span>` : ''}</span>
                                     <span class="comment-date">${escapeHtml((typeof c.createdAt === 'number' && Number.isFinite(c.createdAt)) ? new Date(c.createdAt).toLocaleDateString(dateLocale) : (c.date || ''))}</span>
+                                    ${isAdmin && postDocId && c && c.clientKey ? `<button class="btn-ban-commenter" onclick="banCommenter('${String(c.clientKey)}')">🔨</button>` : ''}
                                     ${isAdmin && postDocId ? `<button class="btn-delete-comment" onclick="deleteComment('${postDocId}', ${idx})">×</button>` : ''}
                                 </div>
                                 <p class="comment-text">${escapeHtml(getCommentLocalizedText(c))}</p>
@@ -1852,20 +1661,14 @@ document.addEventListener('DOMContentLoaded', function () {
             const base = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
             if (!base) throw new Error('rust-base-missing');
             const url = `${base.replace(/\/+$/, '')}/v1/comments`;
-            let token = '';
-            try {
-                const auth = firebase && firebase.auth ? firebase.auth() : null;
-                const user = auth && auth.currentUser ? auth.currentUser : null;
-                if (user && user.getIdToken) token = String(await user.getIdToken());
-            } catch (e) { }
             const headers = { 'Content-Type': 'application/json' };
-            if (token) headers.Authorization = `Bearer ${token}`;
             const resp = await fetch(url, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
                     postId,
                     id: legacyId,
+                    clientId: getClientId(),
                     author,
                     text,
                     lang: currentLang,
@@ -1898,6 +1701,61 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             alert('No se pudo guardar el comentario.');
         });
+    };
+
+    async function getAdminApiKey() {
+        let existing = '';
+        try { existing = sessionStorage.getItem('_adminApiKey') || ''; } catch (e) { }
+        if (existing && String(existing).trim()) return String(existing).trim();
+        const label = currentLang === 'es' ? 'Ingresá tu admin key' : 'Enter your admin key';
+        const entered = window.prompt(label);
+        if (entered == null) return '';
+        const next = String(entered).trim();
+        if (!next) return '';
+        try { sessionStorage.setItem('_adminApiKey', next); } catch (e) { }
+        return next;
+    }
+
+    window.banCommenter = async function (clientKey) {
+        if (!isAdmin) return;
+        const key = String(clientKey || '').trim();
+        if (!key) return;
+
+        const msg =
+            currentLang === 'es'
+                ? '¿Querés banear permanentemente a esta persona?'
+                : 'Do you want to permanently ban this person?';
+        if (!window.confirm(msg)) return;
+
+        const adminKey = await getAdminApiKey();
+        if (!adminKey) return;
+
+        const base = typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
+        if (!base) {
+            alert(currentLang === 'es' ? 'Backend Rust no configurado.' : 'Rust backend not configured.');
+            return;
+        }
+
+        const url = `${base.replace(/\/+$/, '')}/v1/ban`;
+        try {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-admin-key': adminKey
+                },
+                body: JSON.stringify({ clientKey: key, reason: '' })
+            });
+            const json = await resp.json().catch(() => null);
+            if (!resp.ok || !json || !json.ok) {
+                const e = json && (json.error || json.message) ? String(json.error || json.message) : `HTTP ${resp.status}`;
+                alert((currentLang === 'es' ? 'No se pudo banear: ' : 'Ban failed: ') + e);
+                return;
+            }
+            alert(currentLang === 'es' ? 'Baneo aplicado.' : 'Ban applied.');
+        } catch (e) {
+            alert(currentLang === 'es' ? 'No se pudo contactar al backend.' : 'Could not reach backend.');
+        }
     };
 
     window.deleteComment = function (firebaseId, idx) {
