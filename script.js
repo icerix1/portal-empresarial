@@ -52,7 +52,15 @@ const translations = {
         download: 'Descargar',
         donatePaypal: 'Donaciones por PayPal',
         back: 'Volver',
-        translationMissing: 'Sin traducción disponible'
+        translationMissing: 'Sin traducción disponible',
+        loginTitle: 'Iniciar sesión',
+        registerTitle: 'Registrarte',
+        email: 'Email',
+        password: 'Contraseña',
+        haveAccount: '¿Ya tenés cuenta? Iniciar sesión',
+        noAccount: '¿No tenés cuenta? Registrarte',
+        continue: 'Continuar',
+        logout: 'Salir'
     },
     en: {
         portal: "Icerix's blog",
@@ -104,7 +112,15 @@ const translations = {
         download: 'Download',
         donatePaypal: 'Donate via PayPal',
         back: 'Back',
-        translationMissing: 'No translation available'
+        translationMissing: 'No translation available',
+        loginTitle: 'Sign in',
+        registerTitle: 'Sign up',
+        email: 'Email',
+        password: 'Password',
+        haveAccount: 'Already have an account? Sign in',
+        noAccount: 'No account? Sign up',
+        continue: 'Continue',
+        logout: 'Logout'
     }
 };
 
@@ -134,6 +150,23 @@ function updateLanguage() {
     const langEl = document.getElementById('currentLang');
     if (langEl) langEl.textContent = currentLang.toUpperCase();
     document.documentElement.lang = currentLang;
+
+    try {
+        const overlay = document.getElementById('authOverlay');
+        if (overlay) {
+            const titleEl = overlay.querySelector('#authOverlayTitle');
+            const emailEl = overlay.querySelector('#authEmail');
+            const passEl = overlay.querySelector('#authPassword');
+            const submitBtn = overlay.querySelector('#authSubmitBtn');
+            const toggleBtn = overlay.querySelector('#authToggleModeBtn');
+            const mode = overlay.getAttribute('data-mode') === 'register' ? 'register' : 'login';
+            if (titleEl) titleEl.textContent = t(mode === 'login' ? 'loginTitle' : 'registerTitle');
+            if (submitBtn) submitBtn.textContent = t('continue');
+            if (toggleBtn) toggleBtn.textContent = t(mode === 'login' ? 'noAccount' : 'haveAccount');
+            if (emailEl) emailEl.placeholder = t('email');
+            if (passEl) passEl.placeholder = t('password');
+        }
+    } catch (e) { }
 
     if (typeof window.renderFiles === 'function') window.renderFiles();
     if (typeof window.renderBlogs === 'function') window.renderBlogs();
@@ -435,9 +468,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const RUST_DOWNLOADS_ENABLED = false;
 
     // Initialize Firebase
-    let db, storage;
+    let db, storage, auth;
     try {
         firebase.initializeApp(config);
+        auth = firebase.auth();
         db = firebase.firestore();
         storage = firebase.storage();
         try { db.enablePersistence({ synchronizeTabs: true }).catch(() => { }); } catch (e) { }
@@ -450,6 +484,132 @@ document.addEventListener('DOMContentLoaded', function () {
         console.error("Firebase Init Error:", e);
         const warning = document.getElementById('firebase-warning');
         if (warning) warning.style.display = 'flex';
+    }
+
+    function ensureAuthOverlay() {
+        let overlay = document.getElementById('authOverlay');
+        if (overlay) return overlay;
+
+        overlay = document.createElement('div');
+        overlay.id = 'authOverlay';
+        overlay.className = 'zip-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zip-overlay-card">
+                <div class="zip-overlay-title" id="authOverlayTitle">${escapeHtml(t('loginTitle'))}</div>
+                <div class="zip-overlay-sub" id="authOverlaySub"> </div>
+                <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+                    <input id="authEmail" type="email" class="form-control" placeholder="${escapeHtml(t('email'))}" autocomplete="email">
+                    <input id="authPassword" type="password" class="form-control" placeholder="${escapeHtml(t('password'))}" autocomplete="current-password">
+                    <button class="btn btn-primary" id="authSubmitBtn" type="button">${escapeHtml(t('continue'))}</button>
+                    <button class="btn btn-outline" id="authToggleModeBtn" type="button">${escapeHtml(t('noAccount'))}</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    function setAuthOverlay(visible) {
+        const overlay = ensureAuthOverlay();
+        if (visible) overlay.classList.remove('hidden');
+        else overlay.classList.add('hidden');
+    }
+
+    function getIdTokenSafe() {
+        try {
+            const u = auth && auth.currentUser ? auth.currentUser : null;
+            if (!u || typeof u.getIdToken !== 'function') return Promise.resolve('');
+            return u.getIdToken().then((t) => String(t || '')).catch(() => '');
+        } catch (e) {
+            return Promise.resolve('');
+        }
+    }
+
+    function wireAuthUi() {
+        const overlay = ensureAuthOverlay();
+        const titleEl = overlay.querySelector('#authOverlayTitle');
+        const subEl = overlay.querySelector('#authOverlaySub');
+        const emailEl = overlay.querySelector('#authEmail');
+        const passEl = overlay.querySelector('#authPassword');
+        const submitBtn = overlay.querySelector('#authSubmitBtn');
+        const toggleBtn = overlay.querySelector('#authToggleModeBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+
+        let mode = 'login';
+
+        const render = () => {
+            try { overlay.setAttribute('data-mode', mode); } catch (e) { }
+            if (titleEl) titleEl.textContent = t(mode === 'login' ? 'loginTitle' : 'registerTitle');
+            if (toggleBtn) toggleBtn.textContent = t(mode === 'login' ? 'noAccount' : 'haveAccount');
+            if (subEl) subEl.textContent = '';
+            if (passEl) passEl.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+        };
+
+        const setError = (text) => {
+            if (subEl) subEl.textContent = String(text || '');
+        };
+
+        const submit = async () => {
+            if (!auth) return;
+            const email = emailEl ? String(emailEl.value || '').trim() : '';
+            const password = passEl ? String(passEl.value || '') : '';
+            if (!email || !password) {
+                setError(currentLang === 'es' ? 'Completá email y contraseña.' : 'Enter email and password.');
+                return;
+            }
+            setError(currentLang === 'es' ? 'Procesando…' : 'Working…');
+            try {
+                if (mode === 'login') {
+                    await auth.signInWithEmailAndPassword(email, password);
+                } else {
+                    const cred = await auth.createUserWithEmailAndPassword(email, password);
+                    try {
+                        if (cred && cred.user && db) {
+                            await db.collection('users').doc(cred.user.uid).set({
+                                email: cred.user.email || email,
+                                createdAt: Date.now()
+                            }, { merge: true });
+                        }
+                    } catch (e) { }
+                }
+                setError('');
+            } catch (e) {
+                const msg = String(e && e.message ? e.message : e);
+                setError(msg);
+            }
+        };
+
+        if (toggleBtn) toggleBtn.onclick = () => {
+            mode = mode === 'login' ? 'register' : 'login';
+            render();
+        };
+        if (submitBtn) submitBtn.onclick = submit;
+        if (passEl) passEl.onkeydown = (ev) => {
+            if (ev && ev.key === 'Enter') submit();
+        };
+        if (logoutBtn) {
+            logoutBtn.onclick = () => {
+                try { if (auth) auth.signOut(); } catch (e) { }
+            };
+        }
+
+        render();
+    }
+
+    function initAuthGate() {
+        wireAuthUi();
+        setAuthOverlay(true);
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (!auth || typeof auth.onAuthStateChanged !== 'function') return;
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                setAuthOverlay(false);
+                if (logoutBtn) logoutBtn.classList.remove('hidden');
+            } else {
+                setAuthOverlay(true);
+                if (logoutBtn) logoutBtn.classList.add('hidden');
+            }
+        });
     }
 
     // State
@@ -1209,12 +1369,14 @@ document.addEventListener('DOMContentLoaded', function () {
         return '';
     }
 
-    async function downloadWithProgress(url, fallbackFileName, overlayTitle) {
+    async function downloadWithProgress(url, fallbackFileName, overlayTitle, extraHeaders) {
         const controller = typeof AbortController === 'function' ? new AbortController() : null;
         const onCancel = controller ? () => controller.abort() : null;
         setZipOverlay(true, 0, 'Conectando…', overlayTitle, onCancel);
 
         const safeFallback = (fallbackFileName ? String(fallbackFileName) : '').trim() || 'download';
+        const headers = Object.assign({}, extraHeaders || {});
+        const hasExtraHeaders = Object.keys(headers).length > 0;
 
         let resp;
         try {
@@ -1222,12 +1384,18 @@ document.addEventListener('DOMContentLoaded', function () {
                 method: 'GET',
                 mode: 'cors',
                 credentials: 'omit',
+                headers,
                 signal: controller ? controller.signal : undefined
             });
         } catch (e) {
-            setZipOverlay(true, null, 'Iniciando descarga…', overlayTitle, onCancel);
-            triggerDirectDownload(url, safeFallback);
-            setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 2500);
+            if (!hasExtraHeaders) {
+                setZipOverlay(true, null, 'Iniciando descarga…', overlayTitle, null);
+                triggerDirectDownload(url, safeFallback);
+                setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 2500);
+                return;
+            }
+            setZipOverlay(false, 100, '', overlayTitle, null);
+            alert('No se pudo iniciar la descarga.');
             return;
         }
 
@@ -1248,9 +1416,14 @@ document.addEventListener('DOMContentLoaded', function () {
         const totalBytes = /^\d+$/.test(totalHeader) ? Number(totalHeader) : 0;
 
         if (!resp.body || typeof resp.body.getReader !== 'function') {
-            setZipOverlay(true, 5, 'Iniciando descarga…', overlayTitle, onCancel);
-            triggerDirectDownload(url, fileName);
-            setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 2500);
+            if (!hasExtraHeaders) {
+                setZipOverlay(true, null, 'Iniciando descarga…', overlayTitle, null);
+                triggerDirectDownload(url, fileName);
+                setTimeout(() => setZipOverlay(false, 100, '', overlayTitle, null), 2500);
+                return;
+            }
+            setZipOverlay(false, 100, '', overlayTitle, null);
+            alert('Tu navegador no soporta descarga con progreso en este modo.');
             return;
         }
 
@@ -1325,22 +1498,29 @@ document.addEventListener('DOMContentLoaded', function () {
         const item = (Array.isArray(currentFolderItems) ? currentFolderItems : []).find((x) => x && x.id === fileId);
         if (!item || item.type !== 'file') return;
 
-        const rustBase = RUST_DOWNLOADS_ENABLED && typeof RUST_API_BASE_URL === 'string' ? RUST_API_BASE_URL.trim() : '';
         const bucketDefault = (firebase.app && firebase.app().options && firebase.app().options.storageBucket)
             ? firebase.app().options.storageBucket
             : '';
-        const rustDownloadBase = rustBase ? rustBase.replace(/\/+$/, '') + '/v1/download' : '';
+        const functionsBase = getFunctionsBaseUrl();
+        const downloadProxyBase = functionsBase ? functionsBase.replace(/\/+$/, '') + '/downloadProxy' : '';
 
         let href = item && item.url ? String(item.url) : '';
-        if (rustDownloadBase) {
-            const storagePath = item.storagePath || getStoragePathFromDownloadUrl(href);
-            const bucketName = item.bucket || getBucketFromDownloadUrl(href) || bucketDefault;
-            if (storagePath && bucketName) {
-                href = `${rustDownloadBase}?bucket=${encodeURIComponent(bucketName)}&filePath=${encodeURIComponent(storagePath)}`;
-            }
+        const storagePath = item.storagePath || getStoragePathFromDownloadUrl(href);
+        const bucketName = item.bucket || getBucketFromDownloadUrl(href) || bucketDefault;
+        const useProxy = !!(downloadProxyBase && storagePath);
+        if (useProxy) {
+            href = `${downloadProxyBase}?bucket=${encodeURIComponent(bucketName || '')}&filePath=${encodeURIComponent(storagePath)}`;
         }
 
-        downloadWithProgress(href, item.name, 'Descargando archivo…');
+        if (!useProxy) {
+            downloadWithProgress(href, item.name, 'Descargando archivo…');
+            return;
+        }
+
+        getIdTokenSafe().then((token) => {
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            downloadWithProgress(href, item.name, 'Descargando archivo…', headers);
+        });
     };
 
     window.downloadFolder = async function (folderId, folderName) {
@@ -1352,8 +1532,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const url = `${base.replace(/\/+$/, '')}/zipFolder?folderId=${encodeURIComponent(String(folderId || ''))}&ts=${Date.now()}`;
         const name = (folderName ? String(folderName) : 'carpeta') + '.zip';
-        await downloadWithProgress(url, name, 'Descargando carpeta…');
+        const token = await getIdTokenSafe();
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        await downloadWithProgress(url, name, 'Descargando carpeta…', headers);
     };
+
+    initAuthGate();
 
     // --- Admin Actions ---
     window.deleteItem = function (id) {

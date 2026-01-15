@@ -60,6 +60,23 @@ function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+async function requireAuth(req, res) {
+  const h = req && req.headers ? req.headers.authorization : "";
+  const raw = typeof h === "string" ? h : "";
+  const match = raw.match(/^Bearer\s+(.+)$/i);
+  const token = match && match[1] ? match[1].trim() : "";
+  if (!token) {
+    res.status(401).json({ok: false, error: "Unauthorized"});
+    return null;
+  }
+  try {
+    return await admin.auth().verifyIdToken(token);
+  } catch (e) {
+    res.status(401).json({ok: false, error: "Unauthorized"});
+    return null;
+  }
+}
+
 function clampLen(value, maxLen) {
   const s = normalizeString(value);
   if (!s) return "";
@@ -305,7 +322,10 @@ exports.zipFolder = functions.https.onRequest(
     async (req, res) => {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader(
+          "Access-Control-Allow-Headers",
+          "Content-Type, Authorization",
+      );
       res.setHeader(
           "Access-Control-Expose-Headers",
           "Content-Disposition, Content-Length, X-Expected-Bytes",
@@ -322,6 +342,9 @@ exports.zipFolder = functions.https.onRequest(
       }
 
       try {
+        const decoded = await requireAuth(req, res);
+        if (!decoded) return;
+
         const folderId = normalizeString(req.query && req.query.folderId);
         if (!folderId) {
           res.status(400).json({ok: false, error: "Missing folderId"});
@@ -503,7 +526,14 @@ exports.zipFolder = functions.https.onRequest(
 exports.downloadProxy = functions.https.onRequest(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization",
+  );
+  res.setHeader(
+      "Access-Control-Expose-Headers",
+      "Content-Disposition, Content-Length, Accept-Ranges, Content-Range",
+  );
 
   if (req.method === "OPTIONS") {
     res.status(204).send("");
@@ -511,6 +541,9 @@ exports.downloadProxy = functions.https.onRequest(async (req, res) => {
   }
 
   try {
+    const decoded = await requireAuth(req, res);
+    if (!decoded) return;
+
     const rawBucket = req.query && req.query.bucket;
     const raw = req.query && req.query.filePath;
     const filePath = typeof raw === "string" ? decodeURIComponent(raw) : "";
